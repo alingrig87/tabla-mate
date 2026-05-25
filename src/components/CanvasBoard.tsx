@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { GeomKind, GeomItem, SHAPE_GROUPS, drawGeom, drawGeomPreview } from '../shapes';
+import { SUBIECTE } from '../data/subiecte';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -495,6 +496,15 @@ const IconPaste = () => (
     <rect x="8" y="10" width="8" height="6" />
   </svg>
 );
+const IconPdf = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <polyline points="14 2 14 8 20 8" />
+    <line x1="9" y1="15" x2="15" y2="15" />
+    <line x1="9" y1="18" x2="15" y2="18" />
+    <line x1="9" y1="12" x2="12" y2="12" />
+  </svg>
+);
 
 // ─── Mini-canvas icon for each geometric shape ───────────────────────────────
 // Renders a small preview of each shape using drawGeom on a tiny off-screen canvas.
@@ -783,6 +793,91 @@ export default function CanvasBoard(): JSX.Element {
     canvas.addEventListener('wheel', onWheel, { passive: false });
     return () => canvas.removeEventListener('wheel', onWheel);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── PDF import state ─────────────────────────────────────────────────────
+  const [showPdfPanel, setShowPdfPanel] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // loadPDF: dynamically imports pdfjs-dist (lazy chunk), renders each page
+  // to an off-screen canvas, converts to JPEG data URL, commits as ImageItems.
+  //
+  // Dynamic import() = code splitting — pdfjs-dist (~2 MB) is only loaded
+  // when the user actually opens a PDF, not on initial page load.
+  const loadPDF = useCallback(
+    async (source: File | string) => {
+      setPdfLoading(true);
+      setShowPdfPanel(false);
+      try {
+        // Dynamic import: loads the pdfjs-dist chunk on first call only
+        const { getDocument, GlobalWorkerOptions } = await import('pdfjs-dist');
+        // Worker runs PDF parsing off the main thread to avoid UI freezes
+        GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+
+        // Read PDF bytes: from File (disk) or fetch (URL)
+        const data =
+          source instanceof File
+            ? await source.arrayBuffer()
+            : await fetch(source).then((r) => r.arrayBuffer());
+
+        const pdf = await getDocument({ data }).promise;
+        const canvas = canvasRef.current!;
+        // Scale each page to fill the viewport width minus padding
+        const targetW = canvas.offsetWidth - 40;
+
+        const newItems: ImageItem[] = [];
+        // Stack pages vertically starting just below the current viewport top
+        let yOff = panRef.current.y + 20;
+
+        for (let pg = 1; pg <= pdf.numPages; pg++) {
+          const page = await pdf.getPage(pg);
+          const vp0 = page.getViewport({ scale: 1 });
+          const sc = targetW / vp0.width; // scale factor to fill viewport width
+          const vp = page.getViewport({ scale: sc });
+
+          // Off-screen canvas: rendered without being attached to the DOM
+          const oc = document.createElement('canvas');
+          oc.width = Math.round(vp.width);
+          oc.height = Math.round(vp.height);
+          await page.render({ canvas: oc, viewport: vp }).promise;
+
+          const dataURL = oc.toDataURL('image/jpeg', 0.92); // JPEG at 92% quality
+          const id = crypto.randomUUID();
+          const xOff = panRef.current.x + 20;
+
+          // Pre-warm cache: the image data is already decoded (it was just painted
+          // onto `oc`). Setting img.src = dataURL re-encodes/decodes from base64,
+          // but since the data is local this is fast. The onLoad triggers a redraw
+          // so pages appear progressively as they decode.
+          const img = new Image();
+          img.onload = () => {
+            if (_lastCtx) redrawAll(_lastCtx, _lastItems, _lastPan, _lastScale);
+          };
+          img.src = dataURL;
+          _imgCache.set(id, img);
+
+          newItems.push({
+            kind: 'image',
+            id,
+            dataURL,
+            x: xOff,
+            y: yOff,
+            w: oc.width,
+            h: oc.height,
+          });
+          yOff += oc.height + 16; // 16px gap between pages
+        }
+
+        commit([...itemsRef.current, ...newItems]);
+      } catch (err) {
+        console.error('[PDF]', err);
+        alert('Nu am putut încărca PDF-ul.');
+      } finally {
+        setPdfLoading(false);
+      }
+    },
+    [] // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   // ── Image paste helpers ──────────────────────────────────────────────────
 
@@ -1281,6 +1376,37 @@ export default function CanvasBoard(): JSX.Element {
         <PillBtn onClick={pasteFromClipboard} title="Paste image (Ctrl+V)">
           <IconPaste />
         </PillBtn>
+        {/* PDF import button — opens panel with preset exams + file picker */}
+        <PillBtn
+          active={showPdfPanel}
+          onClick={() => setShowPdfPanel((v) => !v)}
+          title="Import PDF"
+        >
+          {pdfLoading ? (
+            // Inline loading spinner while PDF renders
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83">
+                <animateTransform
+                  attributeName="transform"
+                  type="rotate"
+                  from="0 12 12"
+                  to="360 12 12"
+                  dur="1s"
+                  repeatCount="indefinite"
+                />
+              </path>
+            </svg>
+          ) : (
+            <IconPdf />
+          )}
+        </PillBtn>
 
         <Divider />
 
@@ -1423,6 +1549,106 @@ export default function CanvasBoard(): JSX.Element {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Hidden file input for PDF disk import ───────────────────────── */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) loadPDF(f);
+          e.target.value = ''; // reset so the same file can be re-selected
+        }}
+      />
+
+      {/* ── PDF panel ─────────────────────────────────────────────────────
+          Two sections: open from disk + list of preset exam PDFs.
+          Each exam has a Subiect and optional Barem button. */}
+      {showPdfPanel && (
+        <div
+          data-panel
+          style={{
+            position: 'fixed',
+            top: 68,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#fff',
+            borderRadius: 16,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+            padding: '12px 14px',
+            zIndex: 20,
+            maxHeight: '70vh',
+            overflowY: 'auto',
+            userSelect: 'none',
+            minWidth: 260,
+          }}
+        >
+          {/* Open from disk */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              width: '100%',
+              padding: '10px 14px',
+              borderRadius: 10,
+              border: '1px solid #ddd',
+              background: '#f9f9f9',
+              cursor: 'pointer',
+              fontSize: 13,
+              fontFamily: 'sans-serif',
+              marginBottom: 10,
+              textAlign: 'left',
+            }}
+          >
+            📂 Deschide de pe disc…
+          </button>
+
+          {/* Divider */}
+          <div style={{ fontSize: 11, color: '#888', fontFamily: 'sans-serif', marginBottom: 6 }}>
+            Subiecte EN VIII
+          </div>
+
+          {/* Preset exam list */}
+          {SUBIECTE.map((s) => (
+            <div key={s.subiectUrl} style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+              <button
+                onClick={() => loadPDF(s.subiectUrl)}
+                style={{
+                  flex: 1,
+                  padding: '7px 10px',
+                  borderRadius: 8,
+                  border: '1px solid #ddd',
+                  background: '#fff',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontFamily: 'sans-serif',
+                  textAlign: 'left',
+                }}
+              >
+                {s.label}
+              </button>
+              {s.baremUrl && (
+                <button
+                  onClick={() => loadPDF(s.baremUrl!)}
+                  style={{
+                    padding: '7px 10px',
+                    borderRadius: 8,
+                    border: '1px solid #ddd',
+                    background: '#fff',
+                    cursor: 'pointer',
+                    fontSize: 11,
+                    color: '#666',
+                    fontFamily: 'sans-serif',
+                  }}
+                >
+                  Barem
+                </button>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
