@@ -1,6 +1,6 @@
-import React from 'react';
+import CanvasBoard from './components/CanvasBoard';
 
-// Placeholder — replaced in commit 16 with full page routing
+// Minimal App — full routing added in commit 16
 export default function App(): JSX.Element {
-  return <div style={{ width: '100%', height: '100%' }} />;
+  return <CanvasBoard />;
 }
