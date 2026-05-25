@@ -1,8 +1,9 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { GeomKind, GeomItem, SHAPE_GROUPS, drawGeom, drawGeomPreview } from '../shapes';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type PenTool = 'pen' | 'eraser' | 'line' | 'rect' | 'circle' | 'text';
+type PenTool = 'pen' | 'eraser' | 'line' | 'rect' | 'circle' | 'text' | 'geom';
 
 type Point = { x: number; y: number };
 
@@ -32,7 +33,7 @@ interface TextItem {
   content: string;
 }
 
-type DrawItem = PenItem | ShapeItem | TextItem;
+type DrawItem = PenItem | ShapeItem | TextItem | GeomItem;
 
 interface ShapePreview {
   kind: 'line' | 'rect' | 'circle';
@@ -96,6 +97,9 @@ function drawItem(ctx: CanvasRenderingContext2D, item: DrawItem) {
       ctx.textBaseline = 'top';
       ctx.fillText(item.content, item.x, item.y);
       break;
+    case 'geom':
+      drawGeom(ctx, item.geomKind, item.color, item.width, item.x1, item.y1, item.x2, item.y2);
+      break;
   }
   ctx.restore();
 }
@@ -138,7 +142,16 @@ function drawShapePreview(
 function redrawAll(
   ctx: CanvasRenderingContext2D,
   items: DrawItem[],
-  preview?: { shape: ShapePreview; color: string; width: number }
+  preview?: { shape: ShapePreview; color: string; width: number },
+  geomPreview?: {
+    kind: GeomKind;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    color: string;
+    width: number;
+  }
 ) {
   ctx.save();
   ctx.resetTransform();
@@ -146,6 +159,17 @@ function redrawAll(
   ctx.restore();
   items.forEach((item) => drawItem(ctx, item));
   if (preview) drawShapePreview(ctx, preview.shape, preview.color, preview.width);
+  if (geomPreview)
+    drawGeomPreview(
+      ctx,
+      geomPreview.kind,
+      geomPreview.color,
+      geomPreview.width,
+      geomPreview.x1,
+      geomPreview.y1,
+      geomPreview.x2,
+      geomPreview.y2
+    );
 }
 
 // ─── Smart eraser: geometry hit-detection ─────────────────────────────────────
@@ -206,6 +230,14 @@ function hitTest(item: DrawItem, px: number, py: number, tol: number): boolean {
         py >= item.y - tol &&
         py <= item.y + item.fontSize + tol
       );
+    }
+    case 'geom': {
+      // Use bounding-box test for geometric shapes
+      const minX = Math.min(item.x1, item.x2) - tol;
+      const maxX = Math.max(item.x1, item.x2) + tol;
+      const minY = Math.min(item.y1, item.y2) - tol;
+      const maxY = Math.max(item.y1, item.y2) + tol;
+      return px >= minX && px <= maxX && py >= minY && py <= maxY;
     }
   }
 }
@@ -272,6 +304,11 @@ function drawHighlight(ctx: CanvasRenderingContext2D, item: DrawItem) {
       ctx.fillText(item.content, item.x, item.y);
       break;
     }
+    case 'geom': {
+      ctx.globalAlpha = 0.6;
+      drawGeom(ctx, item.geomKind, RED, item.width + 3, item.x1, item.y1, item.x2, item.y2);
+      break;
+    }
   }
   ctx.restore();
 }
@@ -286,6 +323,13 @@ const IC = {
   strokeLinejoin: 'round' as const,
 };
 
+const IconShapes = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <path d="M12 2l4 8H8z" />
+    <rect x="2" y="13" width="8" height="8" />
+    <circle cx="18" cy="17" r="4" />
+  </svg>
+);
 const IconEraser = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
     <path d="M20 20H7L3 16l10-10 7 7-3 3" />
@@ -331,6 +375,25 @@ const IconRedo = () => (
     <path d="M4 20v-7a4 4 0 0 1 4-4h12" />
   </svg>
 );
+
+// ─── Mini-canvas icon for each geometric shape ───────────────────────────────
+// Renders a small preview of each shape using drawGeom on a tiny off-screen canvas.
+// Each ShapeIcon is its own component so the useEffect runs per shape kind.
+function ShapeIcon({ kind }: { kind: GeomKind }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const ctx = c.getContext('2d')!;
+    const dpr = window.devicePixelRatio || 1;
+    c.width = 40 * dpr;
+    c.height = 40 * dpr;
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, 40, 40);
+    drawGeom(ctx, kind, '#333', 1.5, 4, 4, 36, 36);
+  }, [kind]);
+  return <canvas ref={ref} style={{ width: 40, height: 40 }} />;
+}
 
 // ─── Pill button ──────────────────────────────────────────────────────────────
 
@@ -441,6 +504,14 @@ export default function CanvasBoard(): JSX.Element {
     penSizeRef.current = penSize;
   }, [penSize]);
 
+  // ── Geom tool state ───────────────────────────────────────────────────────
+  const [activeGeom, setActiveGeom] = useState<GeomKind | null>(null);
+  const activeGeomRef = useRef<GeomKind | null>(null);
+  useEffect(() => {
+    activeGeomRef.current = activeGeom;
+  }, [activeGeom]);
+  const [showShapes, setShowShapes] = useState(false);
+
   // Panel visibility
   const [showColorPanel, setShowColorPanel] = useState(false);
 
@@ -542,6 +613,7 @@ export default function CanvasBoard(): JSX.Element {
   // Close all panels (e.g. when clicking the canvas)
   function closePopovers() {
     setShowColorPanel(false);
+    setShowShapes(false);
   }
 
   function commitText(tc: TextCursor) {
@@ -611,6 +683,12 @@ export default function CanvasBoard(): JSX.Element {
       return;
     }
 
+    if (t === 'geom' && activeGeomRef.current) {
+      isDrawingRef.current = true;
+      startRef.current = getPos(e);
+      return;
+    }
+
     if (t === 'text') {
       if (textCursor) commitText(textCursor);
       const pos = getPos(e);
@@ -675,6 +753,16 @@ export default function CanvasBoard(): JSX.Element {
         color: colorRef.current,
         width: penSizeRef.current,
       });
+    } else if (t === 'geom' && activeGeomRef.current) {
+      redrawAll(getCtx(), itemsRef.current, undefined, {
+        kind: activeGeomRef.current,
+        x1: startRef.current.x,
+        y1: startRef.current.y,
+        x2: pos.x,
+        y2: pos.y,
+        color: colorRef.current,
+        width: penSizeRef.current,
+      });
     }
   }
 
@@ -723,6 +811,25 @@ export default function CanvasBoard(): JSX.Element {
         ...itemsRef.current,
         {
           kind: t,
+          color: colorRef.current,
+          width: penSizeRef.current,
+          x1,
+          y1,
+          x2: pos.x,
+          y2: pos.y,
+        },
+      ]);
+    } else if (t === 'geom' && activeGeomRef.current) {
+      const { x: x1, y: y1 } = startRef.current;
+      if (Math.abs(pos.x - x1) < 3 && Math.abs(pos.y - y1) < 3) {
+        redrawAll(getCtx(), itemsRef.current);
+        return;
+      }
+      commit([
+        ...itemsRef.current,
+        {
+          kind: 'geom',
+          geomKind: activeGeomRef.current,
           color: colorRef.current,
           width: penSizeRef.current,
           x1,
@@ -797,6 +904,16 @@ export default function CanvasBoard(): JSX.Element {
         </PillBtn>
         <PillBtn active={tool === 'text'} onClick={() => setTool('text')} title="Text (T)">
           <IconText />
+        </PillBtn>
+        <PillBtn
+          active={tool === 'geom'}
+          onClick={() => {
+            setTool('geom');
+            setShowShapes((v) => !v);
+          }}
+          title="Shapes"
+        >
+          <IconShapes />
         </PillBtn>
 
         <Divider />
@@ -940,6 +1057,66 @@ export default function CanvasBoard(): JSX.Element {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Shapes panel ─────────────────────────────────────────────────
+          Grid of shape thumbnails grouped by category. Each button selects
+          the shape and starts drawing. ShapeIcon renders a mini-canvas preview. */}
+      {showShapes && (
+        <div
+          data-panel
+          style={{
+            position: 'fixed',
+            top: 68,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#fff',
+            borderRadius: 16,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+            padding: '12px 16px',
+            zIndex: 20,
+            maxHeight: '70vh',
+            overflowY: 'auto',
+            userSelect: 'none',
+            minWidth: 280,
+          }}
+        >
+          {SHAPE_GROUPS.map((group) => (
+            <div key={group.label} style={{ marginBottom: 12 }}>
+              <div
+                style={{ fontSize: 11, color: '#888', marginBottom: 6, fontFamily: 'sans-serif' }}
+              >
+                {group.label}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {group.shapes.map(({ kind, label }) => (
+                  <button
+                    key={kind}
+                    title={label}
+                    onClick={() => {
+                      setActiveGeom(kind);
+                      setShowShapes(false);
+                    }}
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: 8,
+                      border: activeGeom === kind ? '2px solid #555' : '1px solid #ddd',
+                      background: activeGeom === kind ? '#f5f5f5' : '#fff',
+                      cursor: 'pointer',
+                      padding: 2,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <ShapeIcon kind={kind} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
