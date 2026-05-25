@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -342,7 +342,9 @@ export default function CanvasBoard(): JSX.Element {
     setItems(next);
   }
 
-  function undo() {
+  // useCallback gives undo/redo a stable reference so the keydown useEffect
+  // can list them as deps without re-subscribing on every render
+  const undo = useCallback(() => {
     if (!undoRef.current.length) return;
     const prev = undoRef.current[undoRef.current.length - 1];
     redoRef.current = [...redoRef.current, itemsRef.current];
@@ -350,9 +352,9 @@ export default function CanvasBoard(): JSX.Element {
     setCanUndo(undoRef.current.length > 0);
     setCanRedo(true);
     setItems(prev);
-  }
+  }, []);
 
-  function redo() {
+  const redo = useCallback(() => {
     if (!redoRef.current.length) return;
     const next = redoRef.current[redoRef.current.length - 1];
     undoRef.current = [...undoRef.current, itemsRef.current];
@@ -360,7 +362,28 @@ export default function CanvasBoard(): JSX.Element {
     setCanUndo(true);
     setCanRedo(redoRef.current.length > 0);
     setItems(next);
-  }
+  }, []);
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  // Ctrl+Z = undo, Ctrl+Y / Ctrl+Shift+Z = redo, Escape = close panels
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Don't intercept shortcuts when the user is typing in an input
+      if (e.target instanceof HTMLInputElement) return;
+      const ctrl = e.ctrlKey || e.metaKey; // metaKey = ⌘ on Mac
+      if (ctrl && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      }
+      if (ctrl && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        redo();
+      }
+      if (e.key === 'Escape') setShowColorPanel(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undo, redo]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
