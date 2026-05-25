@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type PenTool = 'pen' | 'line' | 'rect' | 'circle' | 'text';
+type PenTool = 'pen' | 'eraser' | 'line' | 'rect' | 'circle' | 'text';
 
 type Point = { x: number; y: number };
 
@@ -148,6 +148,134 @@ function redrawAll(
   if (preview) drawShapePreview(ctx, preview.shape, preview.color, preview.width);
 }
 
+// ─── Smart eraser: geometry hit-detection ─────────────────────────────────────
+
+// Distance from point (px,py) to segment (ax,ay)→(bx,by).
+// Uses parametric projection: find the closest point on the segment, then measure.
+function distSeg(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax,
+    dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(px - ax, py - ay); // degenerate segment (point)
+  // t = projection parameter: 0 = at A, 1 = at B, clamped to [0,1]
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+// Returns true if the cursor at (px,py) is within `tol` pixels of the item's geometry
+function hitTest(item: DrawItem, px: number, py: number, tol: number): boolean {
+  switch (item.kind) {
+    case 'pen': {
+      const pts = item.points;
+      // Test each segment of the polyline
+      for (let i = 1; i < pts.length; i++)
+        if (distSeg(px, py, pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y) < tol + item.width / 2)
+          return true;
+      // Single-point stroke (tap without drag)
+      return pts.length === 1 && Math.hypot(px - pts[0].x, py - pts[0].y) < tol + item.width;
+    }
+    case 'line':
+      return distSeg(px, py, item.x1, item.y1, item.x2, item.y2) < tol + item.width / 2;
+    case 'rect': {
+      const { x1, y1, x2, y2, width } = item;
+      const t2 = tol + width / 2;
+      // Test all four edges of the rectangle
+      return (
+        distSeg(px, py, x1, y1, x2, y1) < t2 ||
+        distSeg(px, py, x2, y1, x2, y2) < t2 ||
+        distSeg(px, py, x2, y2, x1, y2) < t2 ||
+        distSeg(px, py, x1, y2, x1, y1) < t2
+      );
+    }
+    case 'circle': {
+      const cx = (item.x1 + item.x2) / 2,
+        cy = (item.y1 + item.y2) / 2;
+      const rx = Math.abs(item.x2 - item.x1) / 2,
+        ry = Math.abs(item.y2 - item.y1) / 2;
+      if (!rx || !ry) return false;
+      // Normalized ellipse equation: |sqrt((dx/rx)²+(dy/ry)²) - 1| * minRadius < tol
+      const dx = (px - cx) / rx,
+        dy = (py - cy) / ry;
+      return Math.abs(Math.sqrt(dx * dx + dy * dy) - 1) * Math.min(rx, ry) < tol + item.width / 2;
+    }
+    case 'text': {
+      const approxW = item.content.length * item.fontSize * 0.55;
+      return (
+        px >= item.x - tol &&
+        px <= item.x + approxW + tol &&
+        py >= item.y - tol &&
+        py <= item.y + item.fontSize + tol
+      );
+    }
+  }
+}
+
+// Draw a translucent red highlight over the item to signal "will be erased"
+function drawHighlight(ctx: CanvasRenderingContext2D, item: DrawItem) {
+  ctx.save();
+  const RED = '#ef4444';
+  switch (item.kind) {
+    case 'pen': {
+      ctx.strokeStyle = RED;
+      ctx.lineWidth = item.width + 6;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      item.points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+      ctx.stroke();
+      break;
+    }
+    case 'line': {
+      ctx.strokeStyle = RED;
+      ctx.lineWidth = item.width + 6;
+      ctx.lineCap = 'round';
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      ctx.moveTo(item.x1, item.y1);
+      ctx.lineTo(item.x2, item.y2);
+      ctx.stroke();
+      break;
+    }
+    case 'rect': {
+      ctx.strokeStyle = RED;
+      ctx.lineWidth = item.width + 5;
+      ctx.globalAlpha = 0.55;
+      ctx.strokeRect(item.x1, item.y1, item.x2 - item.x1, item.y2 - item.y1);
+      ctx.fillStyle = RED;
+      ctx.globalAlpha = 0.08;
+      ctx.fillRect(item.x1, item.y1, item.x2 - item.x1, item.y2 - item.y1);
+      break;
+    }
+    case 'circle': {
+      const cx = (item.x1 + item.x2) / 2,
+        cy = (item.y1 + item.y2) / 2;
+      const rx = Math.abs(item.x2 - item.x1) / 2,
+        ry = Math.abs(item.y2 - item.y1) / 2;
+      ctx.strokeStyle = RED;
+      ctx.lineWidth = item.width + 5;
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx || 1, ry || 1, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      break;
+    }
+    case 'text': {
+      ctx.font = `${item.fontSize}px sans-serif`;
+      const w = ctx.measureText(item.content).width;
+      ctx.fillStyle = RED;
+      ctx.globalAlpha = 0.15;
+      ctx.fillRect(item.x - 3, item.y - 3, w + 6, item.fontSize + 6);
+      ctx.globalAlpha = 0.6;
+      ctx.fillStyle = RED;
+      ctx.textBaseline = 'top';
+      ctx.fillText(item.content, item.x, item.y);
+      break;
+    }
+  }
+  ctx.restore();
+}
+
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
 
 const IC = {
@@ -158,6 +286,12 @@ const IC = {
   strokeLinejoin: 'round' as const,
 };
 
+const IconEraser = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <path d="M20 20H7L3 16l10-10 7 7-3 3" />
+    <path d="M6 11l7 7" />
+  </svg>
+);
 const IconPen = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
     <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
@@ -263,6 +397,7 @@ const PALETTE = [
 
 const PEN_SIZES = [2, 4, 8, 16]; // stroke widths in CSS pixels
 const TEXT_FONT_SIZE = 24;
+const ERASER_RADIUS = 20; // hit-test tolerance in CSS pixels
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -283,6 +418,14 @@ export default function CanvasBoard(): JSX.Element {
   const itemsRef = useRef<DrawItem[]>([]);
 
   const [textCursor, setTextCursor] = useState<TextCursor | null>(null);
+
+  // ── Smart eraser state ────────────────────────────────────────────────────
+  // Screen position of the eraser cursor (drives the custom CSS circle overlay)
+  const [eraserPos, setEraserPos] = useState<{ x: number; y: number } | null>(null);
+  // Index of the item currently highlighted (hovered by eraser), -1 = none
+  const hoveredIdxRef = useRef<number>(-1);
+  // Snapshot taken at the START of an erase drag — single undo entry for the whole drag
+  const preEraseSnapshotRef = useRef<DrawItem[] | null>(null);
 
   // ── Color & size state ────────────────────────────────────────────────────
   // Both state (for re-render) and ref (for instant access in event handlers)
@@ -420,10 +563,53 @@ export default function CanvasBoard(): JSX.Element {
 
   // ── Pointer events ────────────────────────────────────────────────────────
 
+  // ── Eraser helpers ────────────────────────────────────────────────────────
+
+  // Find the topmost item under (px,py) using hit-test geometry
+  function findTopHit(px: number, py: number): number {
+    for (let i = itemsRef.current.length - 1; i >= 0; i--) {
+      if (hitTest(itemsRef.current[i], px, py, ERASER_RADIUS)) return i;
+    }
+    return -1;
+  }
+
+  // Update eraser hover highlight without committing (called in pointerMove when not dragging)
+  function updateEraserHover(pos: Point) {
+    const idx = findTopHit(pos.x, pos.y);
+    if (idx === hoveredIdxRef.current) return; // no change
+    hoveredIdxRef.current = idx;
+    // Redraw all items + optional highlight on top
+    const ctx = getCtx();
+    redrawAll(ctx, itemsRef.current);
+    if (idx >= 0) drawHighlight(ctx, itemsRef.current[idx]);
+  }
+
+  // Remove the topmost hit item; push one undo entry for the whole drag session
+  function eraseAt(pos: Point) {
+    const idx = findTopHit(pos.x, pos.y);
+    if (idx < 0) return;
+    // Save a snapshot before the first erase in this drag (for single undo entry)
+    if (!preEraseSnapshotRef.current) {
+      preEraseSnapshotRef.current = itemsRef.current;
+    }
+    const next = itemsRef.current.filter((_, i) => i !== idx);
+    // Update itemsRef directly so subsequent hits in the same drag see fresh state
+    itemsRef.current = next;
+    hoveredIdxRef.current = -1;
+    redrawAll(getCtx(), next);
+  }
+
   function pointerDown(e: React.PointerEvent) {
     closePopovers();
     (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
     const t = toolRef.current;
+
+    if (t === 'eraser') {
+      isDrawingRef.current = true;
+      preEraseSnapshotRef.current = null; // fresh erase session
+      eraseAt(getPos(e));
+      return;
+    }
 
     if (t === 'text') {
       if (textCursor) commitText(textCursor);
@@ -449,9 +635,22 @@ export default function CanvasBoard(): JSX.Element {
   }
 
   function pointerMove(e: React.PointerEvent) {
-    if (!isDrawingRef.current) return;
     const pos = getPos(e);
+    const sp = getScreenPos(e);
     const t = toolRef.current;
+
+    // Eraser: update custom cursor position regardless of whether drawing
+    if (t === 'eraser') {
+      setEraserPos({ x: sp.x, y: sp.y });
+      if (isDrawingRef.current) {
+        eraseAt(pos); // drag-erase: remove items under cursor
+      } else {
+        updateEraserHover(pos); // hover: highlight item under cursor
+      }
+      return;
+    }
+
+    if (!isDrawingRef.current) return;
 
     if (t === 'pen') {
       if (!currentPenRef.current) return;
@@ -479,12 +678,36 @@ export default function CanvasBoard(): JSX.Element {
     }
   }
 
+  function pointerLeave() {
+    // Clear eraser hover highlight and cursor when pointer exits the canvas
+    if (toolRef.current === 'eraser') {
+      setEraserPos(null);
+      hoveredIdxRef.current = -1;
+      redrawAll(getCtx(), itemsRef.current);
+    }
+  }
+
   function pointerUp(e: React.PointerEvent) {
+    const t = toolRef.current;
+
+    if (t === 'eraser') {
+      isDrawingRef.current = false;
+      // Commit the entire drag as ONE undo entry using the snapshot from drag start
+      if (preEraseSnapshotRef.current !== null) {
+        // Push the pre-erase snapshot to undo; itemsRef.current holds the erased state
+        undoRef.current = [...undoRef.current, preEraseSnapshotRef.current];
+        redoRef.current = [];
+        setCanUndo(true);
+        setCanRedo(false);
+        setItems(itemsRef.current); // trigger React re-render with final state
+        preEraseSnapshotRef.current = null;
+      }
+      return;
+    }
+
     if (!isDrawingRef.current) return;
     isDrawingRef.current = false;
     const pos = getPos(e);
-    const t = toolRef.current;
-
     if (t === 'pen') {
       if (!currentPenRef.current) return;
       const stroke = currentPenRef.current;
@@ -529,12 +752,13 @@ export default function CanvasBoard(): JSX.Element {
           background: '#ffffff',
           display: 'block',
           touchAction: 'none',
-          cursor: tool === 'text' ? 'text' : 'crosshair',
+          // cursor:none when eraser active — custom circle overlay takes over
+          cursor: tool === 'eraser' ? 'none' : tool === 'text' ? 'text' : 'crosshair',
         }}
         onPointerDown={pointerDown}
         onPointerMove={pointerMove}
         onPointerUp={pointerUp}
-        onPointerLeave={pointerUp}
+        onPointerLeave={pointerLeave}
       />
 
       {/* ── Floating toolbar ──────────────────────────────────────────── */}
@@ -558,6 +782,9 @@ export default function CanvasBoard(): JSX.Element {
         {/* Drawing tools */}
         <PillBtn active={tool === 'pen'} onClick={() => setTool('pen')} title="Pen (P)">
           <IconPen />
+        </PillBtn>
+        <PillBtn active={tool === 'eraser'} onClick={() => setTool('eraser')} title="Eraser (E)">
+          <IconEraser />
         </PillBtn>
         <PillBtn active={tool === 'line'} onClick={() => setTool('line')} title="Line (L)">
           <IconLine />
@@ -714,6 +941,26 @@ export default function CanvasBoard(): JSX.Element {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Custom eraser cursor ─────────────────────────────────────────
+          A translucent circle that follows the pointer when the eraser is active.
+          The canvas itself uses cursor:none so only this circle is visible. */}
+      {tool === 'eraser' && eraserPos && (
+        <div
+          style={{
+            position: 'fixed',
+            left: eraserPos.x - ERASER_RADIUS,
+            top: eraserPos.y - ERASER_RADIUS,
+            width: ERASER_RADIUS * 2,
+            height: ERASER_RADIUS * 2,
+            borderRadius: '50%',
+            border: '2px solid #ef4444',
+            background: 'rgba(239,68,68,0.08)',
+            pointerEvents: 'none', // don't intercept pointer events
+            zIndex: 5,
+          }}
+        />
       )}
 
       {/* Text input overlay */}
