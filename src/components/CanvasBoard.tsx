@@ -2,7 +2,6 @@ import React, { useRef, useEffect, useState } from 'react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-// Tools available — toolbar UI added in commit 07
 type PenTool = 'pen' | 'line' | 'rect' | 'circle' | 'text';
 
 type Point = { x: number; y: number };
@@ -28,15 +27,13 @@ interface TextItem {
   kind: 'text';
   color: string;
   fontSize: number;
-  x: number; // world coords — where text is drawn
+  x: number;
   y: number;
   content: string;
 }
 
-// DrawItem union grows with each feature commit
 type DrawItem = PenItem | ShapeItem | TextItem;
 
-// Live preview while dragging a shape (not committed yet)
 interface ShapePreview {
   kind: 'line' | 'rect' | 'circle';
   x1: number;
@@ -45,12 +42,10 @@ interface ShapePreview {
   y2: number;
 }
 
-// Tracks where the user clicked for a text entry
-// Needs BOTH world coords (for canvas drawText) and screen coords (for CSS overlay)
 interface TextCursor {
-  x: number; // world coords — passed to ctx.fillText
+  x: number;
   y: number;
-  sx: number; // screen coords — used for position: fixed overlay
+  sx: number;
   sy: number;
   value: string;
 }
@@ -105,7 +100,6 @@ function drawItem(ctx: CanvasRenderingContext2D, item: DrawItem) {
   ctx.restore();
 }
 
-// Draw a dashed ghost preview while the user is dragging a shape
 function drawShapePreview(
   ctx: CanvasRenderingContext2D,
   s: ShapePreview,
@@ -115,7 +109,7 @@ function drawShapePreview(
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = width;
-  ctx.setLineDash([6, 4]); // dashed line: 6px dash, 4px gap
+  ctx.setLineDash([6, 4]);
   switch (s.kind) {
     case 'line':
       ctx.lineCap = 'round';
@@ -141,7 +135,6 @@ function drawShapePreview(
   ctx.restore();
 }
 
-// Clear + redraw all items, with optional live preview overlay
 function redrawAll(
   ctx: CanvasRenderingContext2D,
   items: DrawItem[],
@@ -155,6 +148,105 @@ function redrawAll(
   if (preview) drawShapePreview(ctx, preview.shape, preview.color, preview.width);
 }
 
+// ─── SVG Icons ────────────────────────────────────────────────────────────────
+
+// Shared SVG props: no fill, stroke inherits text color, rounded caps
+const IC = {
+  strokeWidth: 2,
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+};
+
+const IconPen = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+  </svg>
+);
+const IconLine = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <line x1="5" y1="19" x2="19" y2="5" />
+  </svg>
+);
+const IconRect = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <rect x="3" y="5" width="18" height="14" rx="1" />
+  </svg>
+);
+const IconCircle = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <circle cx="12" cy="12" r="9" />
+  </svg>
+);
+const IconText = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <polyline points="4 7 4 4 20 4 20 7" />
+    <line x1="9" y1="20" x2="15" y2="20" />
+    <line x1="12" y1="4" x2="12" y2="20" />
+  </svg>
+);
+const IconUndo = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <polyline points="9 14 4 9 9 4" />
+    <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
+  </svg>
+);
+const IconRedo = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <polyline points="15 14 20 9 15 4" />
+    <path d="M4 20v-7a4 4 0 0 1 4-4h12" />
+  </svg>
+);
+
+// ─── Pill button ──────────────────────────────────────────────────────────────
+
+function PillBtn({
+  active,
+  onClick,
+  children,
+  disabled,
+  title,
+}: {
+  active?: boolean;
+  onClick?: () => void;
+  children: React.ReactNode;
+  disabled?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      style={{
+        width: 40,
+        height: 40,
+        borderRadius: '50%',
+        border: 'none',
+        padding: 0,
+        flexShrink: 0,
+        background: active ? '#1a1a1a' : 'transparent',
+        color: active ? '#fff' : disabled ? '#ccc' : '#333',
+        cursor: disabled ? 'default' : 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        transition: 'background 0.12s',
+        userSelect: 'none',
+      }}
+      onMouseEnter={(e) => {
+        if (!active && !disabled) (e.currentTarget as HTMLElement).style.background = '#f0f0f0';
+      }}
+      onMouseLeave={(e) => {
+        if (!active && !disabled) (e.currentTarget as HTMLElement).style.background = 'transparent';
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const PEN_COLOR = '#1a1a1a';
@@ -166,24 +258,26 @@ const TEXT_FONT_SIZE = 24;
 export default function CanvasBoard(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Tool state — setTool wired to toolbar buttons in commit 07
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [tool, setTool] = useState<PenTool>('pen');
   const toolRef = useRef<PenTool>('pen');
-  // Keep ref in sync so pointer events always see the current tool
   useEffect(() => {
     toolRef.current = tool;
   }, [tool]);
 
   const isDrawingRef = useRef(false);
   const currentPenRef = useRef<PenItem | null>(null);
-  const startRef = useRef<Point>({ x: 0, y: 0 }); // drag start for shapes
+  const startRef = useRef<Point>({ x: 0, y: 0 });
 
   const [items, setItems] = useState<DrawItem[]>([]);
   const itemsRef = useRef<DrawItem[]>([]);
 
-  // Text overlay — null when no text input is active
   const [textCursor, setTextCursor] = useState<TextCursor | null>(null);
+
+  // Undo/redo stacks — wired to buttons below; keyboard shortcuts in commit 09
+  const undoRef = useRef<DrawItem[][]>([]);
+  const redoRef = useRef<DrawItem[][]>([]);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
 
   // ── Canvas init ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -210,25 +304,48 @@ export default function CanvasBoard(): JSX.Element {
     return canvasRef.current!.getContext('2d')!;
   }
 
+  // ── History helpers ──────────────────────────────────────────────────────
+
   function commit(next: DrawItem[]) {
+    undoRef.current = [...undoRef.current, itemsRef.current];
+    redoRef.current = [];
+    setCanUndo(true);
+    setCanRedo(false);
+    setItems(next);
+  }
+
+  function undo() {
+    if (!undoRef.current.length) return;
+    const prev = undoRef.current[undoRef.current.length - 1];
+    redoRef.current = [...redoRef.current, itemsRef.current];
+    undoRef.current = undoRef.current.slice(0, -1);
+    setCanUndo(undoRef.current.length > 0);
+    setCanRedo(true);
+    setItems(prev);
+  }
+
+  function redo() {
+    if (!redoRef.current.length) return;
+    const next = redoRef.current[redoRef.current.length - 1];
+    undoRef.current = [...undoRef.current, itemsRef.current];
+    redoRef.current = redoRef.current.slice(0, -1);
+    setCanUndo(true);
+    setCanRedo(redoRef.current.length > 0);
     setItems(next);
   }
 
   // ── Pointer helpers ────────────────────────────────────────────────────────
 
-  // Screen coords (CSS pixels relative to canvas element)
   function getScreenPos(e: React.PointerEvent): Point {
     const rect = (e.target as HTMLCanvasElement).getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
-  // World coords — at commit 06 scale=1 / pan=0 so same as screen,
-  // but the separation prepares for pan/zoom in commit 12
   function getPos(e: React.PointerEvent): Point {
     return getScreenPos(e);
   }
 
-  // ── Text: commit or cancel ─────────────────────────────────────────────────
+  // ── Text helpers ─────────────────────────────────────────────────────────
 
   function commitText(tc: TextCursor) {
     if (tc.value.trim()) {
@@ -254,11 +371,9 @@ export default function CanvasBoard(): JSX.Element {
     const t = toolRef.current;
 
     if (t === 'text') {
-      // Commit any existing text cursor first
       if (textCursor) commitText(textCursor);
       const pos = getPos(e);
       const sp = getScreenPos(e);
-      // Store both world (for drawText) and screen (for CSS overlay)
       setTextCursor({ x: pos.x, y: pos.y, sx: sp.x, sy: sp.y, value: '' });
       return;
     }
@@ -269,7 +384,6 @@ export default function CanvasBoard(): JSX.Element {
     if (t === 'pen') {
       currentPenRef.current = { kind: 'pen', color: PEN_COLOR, width: PEN_WIDTH, points: [pos] };
     } else {
-      // For all shape tools, just record the start position
       startRef.current = pos;
     }
   }
@@ -297,7 +411,6 @@ export default function CanvasBoard(): JSX.Element {
       ctx.stroke();
       ctx.restore();
     } else if (t === 'line' || t === 'rect' || t === 'circle') {
-      // Redraw everything + dashed preview so user sees the shape while dragging
       redrawAll(getCtx(), itemsRef.current, {
         shape: { kind: t, x1: startRef.current.x, y1: startRef.current.y, x2: pos.x, y2: pos.y },
         color: PEN_COLOR,
@@ -319,9 +432,8 @@ export default function CanvasBoard(): JSX.Element {
       commit([...itemsRef.current, stroke]);
     } else if (t === 'line' || t === 'rect' || t === 'circle') {
       const { x: x1, y: y1 } = startRef.current;
-      // Ignore tiny drags (accidental clicks)
       if (Math.abs(pos.x - x1) < 3 && Math.abs(pos.y - y1) < 3) {
-        redrawAll(getCtx(), itemsRef.current); // clear preview
+        redrawAll(getCtx(), itemsRef.current);
         return;
       }
       commit([
@@ -330,6 +442,12 @@ export default function CanvasBoard(): JSX.Element {
       ]);
     }
   }
+
+  // ── Divider between toolbar groups ────────────────────────────────────────
+
+  const Divider = () => (
+    <div style={{ width: 1, height: 24, background: '#e0e0e0', flexShrink: 0, margin: '0 4px' }} />
+  );
 
   return (
     <>
@@ -351,9 +469,56 @@ export default function CanvasBoard(): JSX.Element {
         onPointerLeave={pointerUp}
       />
 
-      {/* Text input overlay — rendered as a fixed-position <input> on top of the canvas.
-          Position comes from screen coords (sx, sy), NOT world coords, because
-          position: fixed is relative to the viewport (screen space). */}
+      {/* ── Floating toolbar ──────────────────────────────────────────────
+          Centered at the top of the screen.
+          position: fixed + left: 50% + translateX(-50%) = horizontal center.
+          All children have flexShrink: 0 so the bar never collapses. */}
+      <div
+        data-toolbar
+        style={{
+          position: 'fixed',
+          top: 14,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          padding: '6px 12px',
+          background: '#fff',
+          borderRadius: 28,
+          boxShadow: '0 2px 12px rgba(0,0,0,0.12)',
+          userSelect: 'none',
+        }}
+      >
+        {/* Drawing tools */}
+        <PillBtn active={tool === 'pen'} onClick={() => setTool('pen')} title="Pen (P)">
+          <IconPen />
+        </PillBtn>
+        <PillBtn active={tool === 'line'} onClick={() => setTool('line')} title="Line (L)">
+          <IconLine />
+        </PillBtn>
+        <PillBtn active={tool === 'rect'} onClick={() => setTool('rect')} title="Rectangle (R)">
+          <IconRect />
+        </PillBtn>
+        <PillBtn active={tool === 'circle'} onClick={() => setTool('circle')} title="Ellipse (E)">
+          <IconCircle />
+        </PillBtn>
+        <PillBtn active={tool === 'text'} onClick={() => setTool('text')} title="Text (T)">
+          <IconText />
+        </PillBtn>
+
+        <Divider />
+
+        {/* History */}
+        <PillBtn disabled={!canUndo} onClick={undo} title="Undo (Ctrl+Z)">
+          <IconUndo />
+        </PillBtn>
+        <PillBtn disabled={!canRedo} onClick={redo} title="Redo (Ctrl+Y)">
+          <IconRedo />
+        </PillBtn>
+      </div>
+
+      {/* Text input overlay */}
       {textCursor && (
         <input
           autoFocus
@@ -364,9 +529,7 @@ export default function CanvasBoard(): JSX.Element {
               e.preventDefault();
               commitText(textCursor);
             }
-            if (e.key === 'Escape') {
-              setTextCursor(null);
-            }
+            if (e.key === 'Escape') setTextCursor(null);
           }}
           onBlur={() => commitText(textCursor)}
           style={{
