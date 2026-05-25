@@ -150,7 +150,6 @@ function redrawAll(
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
 
-// Shared SVG props: no fill, stroke inherits text color, rounded caps
 const IC = {
   strokeWidth: 2,
   fill: 'none',
@@ -249,8 +248,20 @@ function PillBtn({
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const PEN_COLOR = '#1a1a1a';
-const PEN_WIDTH = 3;
+// 9 preset colors: near-black, warm + cool spectrum, white
+const PALETTE = [
+  '#1a1a1a',
+  '#e53e3e',
+  '#dd6b20',
+  '#d69e2e',
+  '#276749',
+  '#2b6cb0',
+  '#805ad5',
+  '#d53f8c',
+  '#ffffff',
+];
+
+const PEN_SIZES = [2, 4, 8, 16]; // stroke widths in CSS pixels
 const TEXT_FONT_SIZE = 24;
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -273,7 +284,24 @@ export default function CanvasBoard(): JSX.Element {
 
   const [textCursor, setTextCursor] = useState<TextCursor | null>(null);
 
-  // Undo/redo stacks — wired to buttons below; keyboard shortcuts in commit 09
+  // ── Color & size state ────────────────────────────────────────────────────
+  // Both state (for re-render) and ref (for instant access in event handlers)
+  const [color, setColor] = useState('#1a1a1a');
+  const colorRef = useRef('#1a1a1a');
+  useEffect(() => {
+    colorRef.current = color;
+  }, [color]);
+
+  const [penSize, setPenSize] = useState(3);
+  const penSizeRef = useRef(3);
+  useEffect(() => {
+    penSizeRef.current = penSize;
+  }, [penSize]);
+
+  // Panel visibility
+  const [showColorPanel, setShowColorPanel] = useState(false);
+
+  // ── Undo/Redo ─────────────────────────────────────────────────────────────
   const undoRef = useRef<DrawItem[][]>([]);
   const redoRef = useRef<DrawItem[][]>([]);
   const [canUndo, setCanUndo] = useState(false);
@@ -304,7 +332,7 @@ export default function CanvasBoard(): JSX.Element {
     return canvasRef.current!.getContext('2d')!;
   }
 
-  // ── History helpers ──────────────────────────────────────────────────────
+  // ── History ──────────────────────────────────────────────────────────────
 
   function commit(next: DrawItem[]) {
     undoRef.current = [...undoRef.current, itemsRef.current];
@@ -334,7 +362,7 @@ export default function CanvasBoard(): JSX.Element {
     setItems(next);
   }
 
-  // ── Pointer helpers ────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
   function getScreenPos(e: React.PointerEvent): Point {
     const rect = (e.target as HTMLCanvasElement).getBoundingClientRect();
@@ -345,7 +373,10 @@ export default function CanvasBoard(): JSX.Element {
     return getScreenPos(e);
   }
 
-  // ── Text helpers ─────────────────────────────────────────────────────────
+  // Close all panels (e.g. when clicking the canvas)
+  function closePopovers() {
+    setShowColorPanel(false);
+  }
 
   function commitText(tc: TextCursor) {
     if (tc.value.trim()) {
@@ -353,7 +384,7 @@ export default function CanvasBoard(): JSX.Element {
         ...itemsRef.current,
         {
           kind: 'text',
-          color: PEN_COLOR,
+          color: colorRef.current,
           fontSize: TEXT_FONT_SIZE,
           x: tc.x,
           y: tc.y,
@@ -367,6 +398,7 @@ export default function CanvasBoard(): JSX.Element {
   // ── Pointer events ────────────────────────────────────────────────────────
 
   function pointerDown(e: React.PointerEvent) {
+    closePopovers();
     (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
     const t = toolRef.current;
 
@@ -382,7 +414,12 @@ export default function CanvasBoard(): JSX.Element {
     const pos = getPos(e);
 
     if (t === 'pen') {
-      currentPenRef.current = { kind: 'pen', color: PEN_COLOR, width: PEN_WIDTH, points: [pos] };
+      currentPenRef.current = {
+        kind: 'pen',
+        color: colorRef.current,
+        width: penSizeRef.current,
+        points: [pos],
+      };
     } else {
       startRef.current = pos;
     }
@@ -401,8 +438,8 @@ export default function CanvasBoard(): JSX.Element {
       if (!prev) return;
       const ctx = getCtx();
       ctx.save();
-      ctx.strokeStyle = PEN_COLOR;
-      ctx.lineWidth = PEN_WIDTH;
+      ctx.strokeStyle = colorRef.current;
+      ctx.lineWidth = penSizeRef.current;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.beginPath();
@@ -413,8 +450,8 @@ export default function CanvasBoard(): JSX.Element {
     } else if (t === 'line' || t === 'rect' || t === 'circle') {
       redrawAll(getCtx(), itemsRef.current, {
         shape: { kind: t, x1: startRef.current.x, y1: startRef.current.y, x2: pos.x, y2: pos.y },
-        color: PEN_COLOR,
-        width: PEN_WIDTH,
+        color: colorRef.current,
+        width: penSizeRef.current,
       });
     }
   }
@@ -438,12 +475,20 @@ export default function CanvasBoard(): JSX.Element {
       }
       commit([
         ...itemsRef.current,
-        { kind: t, color: PEN_COLOR, width: PEN_WIDTH, x1, y1, x2: pos.x, y2: pos.y },
+        {
+          kind: t,
+          color: colorRef.current,
+          width: penSizeRef.current,
+          x1,
+          y1,
+          x2: pos.x,
+          y2: pos.y,
+        },
       ]);
     }
   }
 
-  // ── Divider between toolbar groups ────────────────────────────────────────
+  // ── Shared divider ────────────────────────────────────────────────────────
 
   const Divider = () => (
     <div style={{ width: 1, height: 24, background: '#e0e0e0', flexShrink: 0, margin: '0 4px' }} />
@@ -469,10 +514,7 @@ export default function CanvasBoard(): JSX.Element {
         onPointerLeave={pointerUp}
       />
 
-      {/* ── Floating toolbar ──────────────────────────────────────────────
-          Centered at the top of the screen.
-          position: fixed + left: 50% + translateX(-50%) = horizontal center.
-          All children have flexShrink: 0 so the bar never collapses. */}
+      {/* ── Floating toolbar ──────────────────────────────────────────── */}
       <div
         data-toolbar
         style={{
@@ -509,6 +551,39 @@ export default function CanvasBoard(): JSX.Element {
 
         <Divider />
 
+        {/* Color dot — opens the palette panel */}
+        <button
+          data-toolbar
+          title="Color & size"
+          onClick={() => setShowColorPanel((v) => !v)}
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: '50%',
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          {/* Dot shows the current color */}
+          <div
+            style={{
+              width: 20,
+              height: 20,
+              borderRadius: '50%',
+              background: color,
+              border: '2px solid #ccc',
+              boxSizing: 'border-box',
+            }}
+          />
+        </button>
+
+        <Divider />
+
         {/* History */}
         <PillBtn disabled={!canUndo} onClick={undo} title="Undo (Ctrl+Z)">
           <IconUndo />
@@ -517,6 +592,106 @@ export default function CanvasBoard(): JSX.Element {
           <IconRedo />
         </PillBtn>
       </div>
+
+      {/* ── Color & size panel ────────────────────────────────────────────
+          Appears below the toolbar when the color dot is clicked.
+          Clicking the canvas (pointerDown calls closePopovers) dismisses it. */}
+      {showColorPanel && (
+        <div
+          data-panel
+          style={{
+            position: 'fixed',
+            top: 68,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#fff',
+            borderRadius: 16,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+            padding: '16px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+            zIndex: 20,
+            userSelect: 'none',
+          }}
+        >
+          {/* Preset palette */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', maxWidth: 224 }}>
+            {PALETTE.map((c) => (
+              <button
+                key={c}
+                onClick={() => setColor(c)}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
+                  border: c === color ? '3px solid #555' : '2px solid #ddd',
+                  background: c,
+                  cursor: 'pointer',
+                  padding: 0,
+                  flexShrink: 0,
+                  boxSizing: 'border-box',
+                  transition: 'border 0.1s',
+                }}
+              />
+            ))}
+            {/* Native color picker — extends palette with any custom color */}
+            <input
+              type="color"
+              value={color}
+              onChange={(e) => setColor(e.target.value)}
+              title="Custom color"
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: '50%',
+                cursor: 'pointer',
+                border: 'none',
+                padding: 0,
+              }}
+            />
+          </div>
+
+          {/* Stroke size selector */}
+          <div>
+            <div style={{ fontSize: 11, color: '#888', marginBottom: 6, fontFamily: 'sans-serif' }}>
+              Stroke size
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {PEN_SIZES.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setPenSize(s)}
+                  title={`${s}px`}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 8,
+                    border: s === penSize ? '2px solid #555' : '1px solid #ddd',
+                    background: s === penSize ? '#f5f5f5' : '#fff',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 0,
+                    flexShrink: 0,
+                  }}
+                >
+                  {/* Visual dot sized proportionally to stroke width */}
+                  <div
+                    style={{
+                      width: s,
+                      height: s,
+                      borderRadius: '50%',
+                      background: '#333',
+                    }}
+                  />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Text input overlay */}
       {textCursor && (
@@ -538,14 +713,14 @@ export default function CanvasBoard(): JSX.Element {
             top: textCursor.sy,
             fontSize: TEXT_FONT_SIZE,
             fontFamily: 'sans-serif',
-            color: PEN_COLOR,
+            color: colorRef.current,
             background: 'transparent',
             border: 'none',
             outline: '1px dashed #888',
             padding: '2px 4px',
             minWidth: 80,
             zIndex: 10,
-            caretColor: PEN_COLOR,
+            caretColor: colorRef.current,
           }}
         />
       )}
