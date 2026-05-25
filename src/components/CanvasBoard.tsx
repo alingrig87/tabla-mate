@@ -3,7 +3,7 @@ import { GeomKind, GeomItem, SHAPE_GROUPS, drawGeom, drawGeomPreview } from '../
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type PenTool = 'pen' | 'eraser' | 'line' | 'rect' | 'circle' | 'text' | 'geom';
+type PenTool = 'pen' | 'eraser' | 'line' | 'rect' | 'circle' | 'text' | 'geom' | 'move';
 
 type Point = { x: number; y: number };
 
@@ -142,6 +142,8 @@ function drawShapePreview(
 function redrawAll(
   ctx: CanvasRenderingContext2D,
   items: DrawItem[],
+  pan: Point,
+  scale: number,
   preview?: { shape: ShapePreview; color: string; width: number },
   geomPreview?: {
     kind: GeomKind;
@@ -153,10 +155,15 @@ function redrawAll(
     width: number;
   }
 ) {
-  ctx.save();
+  const dpr = window.devicePixelRatio || 1;
+  // Reset to device-pixel space to clear the full physical canvas
   ctx.resetTransform();
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  ctx.restore();
+  // Apply world transform: DPR scaling + zoom scale + pan offset.
+  // After this, all drawing commands use world coordinates — the canvas
+  // maps them to physical pixels: physical = (world - pan) * dpr * scale
+  ctx.scale(dpr * scale, dpr * scale);
+  ctx.translate(-pan.x, -pan.y);
   items.forEach((item) => drawItem(ctx, item));
   if (preview) drawShapePreview(ctx, preview.shape, preview.color, preview.width);
   if (geomPreview)
@@ -170,6 +177,8 @@ function redrawAll(
       geomPreview.x2,
       geomPreview.y2
     );
+  // Note: transform is left active so incremental pen strokes drawn immediately
+  // after redrawAll (in pointerMove) are correctly placed in world space.
 }
 
 // ─── Smart eraser: geometry hit-detection ─────────────────────────────────────
@@ -375,6 +384,37 @@ const IconRedo = () => (
     <path d="M4 20v-7a4 4 0 0 1 4-4h12" />
   </svg>
 );
+const IconMove = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <polyline points="5 9 2 12 5 15" />
+    <polyline points="9 5 12 2 15 5" />
+    <polyline points="15 19 12 22 9 19" />
+    <polyline points="19 9 22 12 19 15" />
+    <line x1="2" y1="12" x2="22" y2="12" />
+    <line x1="12" y1="2" x2="12" y2="22" />
+  </svg>
+);
+const IconZoomIn = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <circle cx="11" cy="11" r="8" />
+    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    <line x1="11" y1="8" x2="11" y2="14" />
+    <line x1="8" y1="11" x2="14" y2="11" />
+  </svg>
+);
+const IconZoomOut = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <circle cx="11" cy="11" r="8" />
+    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    <line x1="8" y1="11" x2="14" y2="11" />
+  </svg>
+);
+const IconHome = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    <polyline points="9 22 9 12 15 12 15 22" />
+  </svg>
+);
 
 // ─── Mini-canvas icon for each geometric shape ───────────────────────────────
 // Renders a small preview of each shape using drawGeom on a tiny off-screen canvas.
@@ -462,6 +502,9 @@ const PEN_SIZES = [2, 4, 8, 16]; // stroke widths in CSS pixels
 const TEXT_FONT_SIZE = 24;
 const ERASER_RADIUS = 20; // hit-test tolerance in CSS pixels
 
+// Discrete zoom levels — wheel/button zoom snaps to nearest step
+const ZOOM_STEPS = [0.1, 0.15, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4];
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function CanvasBoard(): JSX.Element {
@@ -515,6 +558,21 @@ export default function CanvasBoard(): JSX.Element {
   // Panel visibility
   const [showColorPanel, setShowColorPanel] = useState(false);
 
+  // ── Pan & zoom state ─────────────────────────────────────────────────────
+  // panRef: world-coordinate position of the viewport's top-left corner.
+  // Increasing pan moves the viewport right/down (content scrolls left/up).
+  const panRef = useRef<Point>({ x: 0, y: 0 });
+  // scaleRef: zoom factor. 1 = 100%, 2 = 200% (zoomed in), 0.5 = 50% (zoomed out).
+  const scaleRef = useRef(1);
+  // zoom state mirrors scaleRef for React re-renders (displays the % label)
+  const [zoom, setZoom] = useState(1);
+
+  // Refs for the move-tool pan gesture
+  const isPanningRef = useRef(false); // true while drag-panning
+  const [isPanning, setIsPanning] = useState(false); // drives grab/grabbing cursor
+  const panStartRef = useRef<Point>({ x: 0, y: 0 }); // screen pos at drag start
+  const panOriginRef = useRef<Point>({ x: 0, y: 0 }); // panRef.current at drag start
+
   // ── Undo/Redo ─────────────────────────────────────────────────────────────
   const undoRef = useRef<DrawItem[][]>([]);
   const redoRef = useRef<DrawItem[][]>([]);
@@ -522,6 +580,8 @@ export default function CanvasBoard(): JSX.Element {
   const [canRedo, setCanRedo] = useState(false);
 
   // ── Canvas init ──────────────────────────────────────────────────────────
+  // Setting canvas.width/height resets all transforms — redrawAll re-applies them.
+  // We no longer pre-scale here; redrawAll handles DPR + zoom + pan in one call.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -529,8 +589,7 @@ export default function CanvasBoard(): JSX.Element {
       const dpr = window.devicePixelRatio || 1;
       canvas.width = canvas.offsetWidth * dpr;
       canvas.height = canvas.offsetHeight * dpr;
-      canvas.getContext('2d')!.scale(dpr, dpr);
-      redrawAll(canvas.getContext('2d')!, itemsRef.current);
+      redrawAll(canvas.getContext('2d')!, itemsRef.current, panRef.current, scaleRef.current);
     };
     resize();
     window.addEventListener('resize', resize);
@@ -539,12 +598,111 @@ export default function CanvasBoard(): JSX.Element {
 
   useEffect(() => {
     itemsRef.current = items;
-    redrawAll(canvasRef.current!.getContext('2d')!, items);
+    redrawAll(canvasRef.current!.getContext('2d')!, items, panRef.current, scaleRef.current);
   }, [items]);
 
   function getCtx() {
     return canvasRef.current!.getContext('2d')!;
   }
+
+  // ── redraw: component-scoped wrapper around the module-level redrawAll ────
+  // Captures the current pan/scale refs so call sites don't repeat them.
+  // Optional overrides let callers pass a live preview without committing it.
+  function redraw(
+    overrideItems?: DrawItem[],
+    preview?: { shape: ShapePreview; color: string; width: number },
+    geomPreview?: {
+      kind: GeomKind;
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      color: string;
+      width: number;
+    }
+  ) {
+    redrawAll(
+      getCtx(),
+      overrideItems ?? itemsRef.current,
+      panRef.current,
+      scaleRef.current,
+      preview,
+      geomPreview
+    );
+  }
+
+  // ── Zoom helpers ─────────────────────────────────────────────────────────
+
+  // Zoom to newScale keeping the canvas point (cx, cy) in CSS pixels stationary.
+  // Math: world_x = screen_x / scale + pan.x must be equal before and after zoom.
+  // → newPan.x = screen_x / oldScale + oldPan.x − screen_x / newScale
+  function applyZoom(newScale: number, cx: number, cy: number) {
+    const oldScale = scaleRef.current;
+    const oldPan = panRef.current;
+    const clamped = Math.max(ZOOM_STEPS[0], Math.min(ZOOM_STEPS[ZOOM_STEPS.length - 1], newScale));
+    scaleRef.current = clamped;
+    panRef.current = {
+      x: cx / oldScale + oldPan.x - cx / clamped,
+      y: cy / oldScale + oldPan.y - cy / clamped,
+    };
+    setZoom(clamped);
+    redrawAll(getCtx(), itemsRef.current, panRef.current, scaleRef.current);
+  }
+
+  function zoomIn() {
+    const canvas = canvasRef.current!;
+    // Zoom toward the centre of the viewport
+    const cx = canvas.offsetWidth / 2;
+    const cy = canvas.offsetHeight / 2;
+    const next =
+      ZOOM_STEPS.find((s) => s > scaleRef.current + 0.001) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
+    applyZoom(next, cx, cy);
+  }
+
+  function zoomOut() {
+    const canvas = canvasRef.current!;
+    const cx = canvas.offsetWidth / 2;
+    const cy = canvas.offsetHeight / 2;
+    const prev =
+      [...ZOOM_STEPS].reverse().find((s) => s < scaleRef.current - 0.001) ?? ZOOM_STEPS[0];
+    applyZoom(prev, cx, cy);
+  }
+
+  function resetView() {
+    panRef.current = { x: 0, y: 0 };
+    scaleRef.current = 1;
+    setZoom(1);
+    redrawAll(getCtx(), itemsRef.current, panRef.current, scaleRef.current);
+  }
+
+  // ── Wheel event: zoom (Ctrl/pinch) or pan (two-finger scroll / mouse wheel) ─
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault(); // stop page scroll
+      const rect = canvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left; // cursor in CSS pixels relative to canvas
+      const cy = e.clientY - rect.top;
+
+      if (e.ctrlKey) {
+        // Pinch-to-zoom (trackpad sends ctrlKey=true) or Ctrl+Wheel (mouse)
+        // deltaY < 0 = zoom in, deltaY > 0 = zoom out
+        const delta = -e.deltaY * (e.deltaMode === 0 ? 0.005 : 0.1);
+        applyZoom(scaleRef.current * (1 + delta), cx, cy);
+      } else {
+        // Two-finger scroll (trackpad) or plain mouse wheel → pan
+        panRef.current = {
+          x: panRef.current.x + e.deltaX / scaleRef.current,
+          y: panRef.current.y + e.deltaY / scaleRef.current,
+        };
+        redrawAll(getCtx(), itemsRef.current, panRef.current, scaleRef.current);
+      }
+    };
+    // { passive: false } required so we can call preventDefault
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── History ──────────────────────────────────────────────────────────────
 
@@ -606,8 +764,15 @@ export default function CanvasBoard(): JSX.Element {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
+  // Convert pointer event to WORLD coordinates.
+  // World = screen / scale + pan
+  // (Inverse of the canvas transform: physical = (world - pan) * dpr * scale)
   function getPos(e: React.PointerEvent): Point {
-    return getScreenPos(e);
+    const s = getScreenPos(e);
+    return {
+      x: s.x / scaleRef.current + panRef.current.x,
+      y: s.y / scaleRef.current + panRef.current.y,
+    };
   }
 
   // Close all panels (e.g. when clicking the canvas)
@@ -637,10 +802,12 @@ export default function CanvasBoard(): JSX.Element {
 
   // ── Eraser helpers ────────────────────────────────────────────────────────
 
-  // Find the topmost item under (px,py) using hit-test geometry
+  // Find the topmost item under (px,py) in world coordinates.
+  // Tolerance is ERASER_RADIUS screen pixels, converted to world units at current zoom.
   function findTopHit(px: number, py: number): number {
+    const tol = ERASER_RADIUS / scaleRef.current; // world-space tolerance
     for (let i = itemsRef.current.length - 1; i >= 0; i--) {
-      if (hitTest(itemsRef.current[i], px, py, ERASER_RADIUS)) return i;
+      if (hitTest(itemsRef.current[i], px, py, tol)) return i;
     }
     return -1;
   }
@@ -650,10 +817,8 @@ export default function CanvasBoard(): JSX.Element {
     const idx = findTopHit(pos.x, pos.y);
     if (idx === hoveredIdxRef.current) return; // no change
     hoveredIdxRef.current = idx;
-    // Redraw all items + optional highlight on top
-    const ctx = getCtx();
-    redrawAll(ctx, itemsRef.current);
-    if (idx >= 0) drawHighlight(ctx, itemsRef.current[idx]);
+    redraw(); // redraw all items with current pan/scale
+    if (idx >= 0) drawHighlight(getCtx(), itemsRef.current[idx]);
   }
 
   // Remove the topmost hit item; push one undo entry for the whole drag session
@@ -668,13 +833,22 @@ export default function CanvasBoard(): JSX.Element {
     // Update itemsRef directly so subsequent hits in the same drag see fresh state
     itemsRef.current = next;
     hoveredIdxRef.current = -1;
-    redrawAll(getCtx(), next);
+    redraw(next);
   }
 
   function pointerDown(e: React.PointerEvent) {
     closePopovers();
     (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
     const t = toolRef.current;
+
+    // Move tool: start a pan drag
+    if (t === 'move') {
+      isPanningRef.current = true;
+      setIsPanning(true);
+      panStartRef.current = getScreenPos(e);
+      panOriginRef.current = { ...panRef.current };
+      return;
+    }
 
     if (t === 'eraser') {
       isDrawingRef.current = true;
@@ -717,6 +891,18 @@ export default function CanvasBoard(): JSX.Element {
     const sp = getScreenPos(e);
     const t = toolRef.current;
 
+    // Move tool: drag to pan the canvas
+    if (t === 'move') {
+      if (!isPanningRef.current) return;
+      // Shift pan by the screen delta, scaled to world units
+      panRef.current = {
+        x: panOriginRef.current.x - (sp.x - panStartRef.current.x) / scaleRef.current,
+        y: panOriginRef.current.y - (sp.y - panStartRef.current.y) / scaleRef.current,
+      };
+      redrawAll(getCtx(), itemsRef.current, panRef.current, scaleRef.current);
+      return;
+    }
+
     // Eraser: update custom cursor position regardless of whether drawing
     if (t === 'eraser') {
       setEraserPos({ x: sp.x, y: sp.y });
@@ -736,6 +922,8 @@ export default function CanvasBoard(): JSX.Element {
       const pts = currentPenRef.current.points;
       const prev = pts[pts.length - 2];
       if (!prev) return;
+      // Draw only the new segment incrementally (world transform is already active
+      // on the context from the last redrawAll call, so world coords draw correctly)
       const ctx = getCtx();
       ctx.save();
       ctx.strokeStyle = colorRef.current;
@@ -748,13 +936,13 @@ export default function CanvasBoard(): JSX.Element {
       ctx.stroke();
       ctx.restore();
     } else if (t === 'line' || t === 'rect' || t === 'circle') {
-      redrawAll(getCtx(), itemsRef.current, {
+      redraw(undefined, {
         shape: { kind: t, x1: startRef.current.x, y1: startRef.current.y, x2: pos.x, y2: pos.y },
         color: colorRef.current,
         width: penSizeRef.current,
       });
     } else if (t === 'geom' && activeGeomRef.current) {
-      redrawAll(getCtx(), itemsRef.current, undefined, {
+      redraw(undefined, undefined, {
         kind: activeGeomRef.current,
         x1: startRef.current.x,
         y1: startRef.current.y,
@@ -771,18 +959,24 @@ export default function CanvasBoard(): JSX.Element {
     if (toolRef.current === 'eraser') {
       setEraserPos(null);
       hoveredIdxRef.current = -1;
-      redrawAll(getCtx(), itemsRef.current);
+      redraw();
     }
   }
 
   function pointerUp(e: React.PointerEvent) {
     const t = toolRef.current;
 
+    // Move tool: end pan drag
+    if (t === 'move') {
+      isPanningRef.current = false;
+      setIsPanning(false);
+      return;
+    }
+
     if (t === 'eraser') {
       isDrawingRef.current = false;
       // Commit the entire drag as ONE undo entry using the snapshot from drag start
       if (preEraseSnapshotRef.current !== null) {
-        // Push the pre-erase snapshot to undo; itemsRef.current holds the erased state
         undoRef.current = [...undoRef.current, preEraseSnapshotRef.current];
         redoRef.current = [];
         setCanUndo(true);
@@ -804,7 +998,7 @@ export default function CanvasBoard(): JSX.Element {
     } else if (t === 'line' || t === 'rect' || t === 'circle') {
       const { x: x1, y: y1 } = startRef.current;
       if (Math.abs(pos.x - x1) < 3 && Math.abs(pos.y - y1) < 3) {
-        redrawAll(getCtx(), itemsRef.current);
+        redraw(); // discard tiny drag — restore clean canvas
         return;
       }
       commit([
@@ -822,7 +1016,7 @@ export default function CanvasBoard(): JSX.Element {
     } else if (t === 'geom' && activeGeomRef.current) {
       const { x: x1, y: y1 } = startRef.current;
       if (Math.abs(pos.x - x1) < 3 && Math.abs(pos.y - y1) < 3) {
-        redrawAll(getCtx(), itemsRef.current);
+        redraw(); // discard tiny drag
         return;
       }
       commit([
@@ -859,8 +1053,19 @@ export default function CanvasBoard(): JSX.Element {
           background: '#ffffff',
           display: 'block',
           touchAction: 'none',
-          // cursor:none when eraser active — custom circle overlay takes over
-          cursor: tool === 'eraser' ? 'none' : tool === 'text' ? 'text' : 'crosshair',
+          // eraser: cursor:none (custom circle overlay takes over)
+          // move: grab/grabbing depending on whether we're mid-drag
+          // text: text caret; everything else: crosshair for precision
+          cursor:
+            tool === 'eraser'
+              ? 'none'
+              : tool === 'move'
+                ? isPanning
+                  ? 'grabbing'
+                  : 'grab'
+                : tool === 'text'
+                  ? 'text'
+                  : 'crosshair',
         }}
         onPointerDown={pointerDown}
         onPointerMove={pointerMove}
@@ -914,6 +1119,9 @@ export default function CanvasBoard(): JSX.Element {
           title="Shapes"
         >
           <IconShapes />
+        </PillBtn>
+        <PillBtn active={tool === 'move'} onClick={() => setTool('move')} title="Move / Pan (V)">
+          <IconMove />
         </PillBtn>
 
         <Divider />
@@ -1171,6 +1379,52 @@ export default function CanvasBoard(): JSX.Element {
           }}
         />
       )}
+
+      {/* ── Zoom controls — right edge ────────────────────────────────────
+          Vertical pill: zoom-in button, zoom % label, zoom-out button,
+          divider, reset-view (home) button. */}
+      <div
+        style={{
+          position: 'fixed',
+          right: 16,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 2,
+          padding: '8px 6px',
+          background: '#fff',
+          borderRadius: 24,
+          boxShadow: '0 2px 12px rgba(0,0,0,0.12)',
+          userSelect: 'none',
+          zIndex: 10,
+        }}
+      >
+        <PillBtn onClick={zoomIn} title="Zoom in (+)">
+          <IconZoomIn />
+        </PillBtn>
+        {/* Zoom percentage label — updates via zoom state */}
+        <div
+          style={{
+            fontSize: 11,
+            color: '#555',
+            fontFamily: 'sans-serif',
+            padding: '4px 0',
+            minWidth: 36,
+            textAlign: 'center',
+          }}
+        >
+          {Math.round(zoom * 100)}%
+        </div>
+        <PillBtn onClick={zoomOut} title="Zoom out (-)">
+          <IconZoomOut />
+        </PillBtn>
+        <div style={{ width: 20, height: 1, background: '#e0e0e0', margin: '4px 0' }} />
+        <PillBtn onClick={resetView} title="Reset view (0)">
+          <IconHome />
+        </PillBtn>
+      </div>
     </>
   );
 }
