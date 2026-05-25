@@ -33,7 +33,46 @@ interface TextItem {
   content: string;
 }
 
-type DrawItem = PenItem | ShapeItem | TextItem | GeomItem;
+// Images are stored as data URLs so they survive undo/redo snapshots.
+// Each image has a unique id used as cache key.
+interface ImageItem {
+  kind: 'image';
+  id: string; // crypto.randomUUID() — used as cache key
+  dataURL: string; // base64-encoded PNG/JPEG — serialisable, survives snapshots
+  x: number; // world coords of the top-left corner
+  y: number;
+  w: number; // display size in world units
+  h: number;
+}
+
+type DrawItem = PenItem | ShapeItem | TextItem | GeomItem | ImageItem;
+
+// ─── Image cache ──────────────────────────────────────────────────────────────
+// Module-level Map: persists across renders (unlike useState) and across undo
+// snapshots. When an ImageItem is drawn, its HTMLImageElement is looked up here.
+// A missing entry triggers an async preload that redraws when the image loads.
+const _imgCache = new Map<string, HTMLImageElement>();
+
+// Last-render snapshot — updated at the top of every redrawAll() call.
+// Used by image onLoad callbacks to re-trigger drawing once decoding finishes.
+let _lastCtx: CanvasRenderingContext2D | null = null;
+let _lastItems: DrawItem[] = [];
+let _lastPan: Point = { x: 0, y: 0 };
+let _lastScale = 1;
+
+function preloadImg(item: ImageItem): HTMLImageElement {
+  if (_imgCache.has(item.id)) return _imgCache.get(item.id)!;
+  const img = new Image();
+  img.onload = () => {
+    // Re-draw with the most recent render parameters once the image has decoded.
+    // This fires asynchronously — the ref snapshot is stale-safe because nothing
+    // mutates _last* between the preload call and this callback.
+    if (_lastCtx) redrawAll(_lastCtx, _lastItems, _lastPan, _lastScale);
+  };
+  img.src = item.dataURL;
+  _imgCache.set(item.id, img);
+  return img;
+}
 
 interface ShapePreview {
   kind: 'line' | 'rect' | 'circle';
@@ -100,6 +139,16 @@ function drawItem(ctx: CanvasRenderingContext2D, item: DrawItem) {
     case 'geom':
       drawGeom(ctx, item.geomKind, item.color, item.width, item.x1, item.y1, item.x2, item.y2);
       break;
+    case 'image': {
+      // preloadImg returns the cached HTMLImageElement, or starts an async load.
+      // If loading is needed, the onLoad callback (inside preloadImg) will call
+      // redrawAll again via _lastCtx/_lastItems/_lastPan/_lastScale once decoded.
+      const img = preloadImg(item);
+      if (img.complete && img.naturalWidth > 0) {
+        ctx.drawImage(img, item.x, item.y, item.w, item.h);
+      }
+      break;
+    }
   }
   ctx.restore();
 }
@@ -155,6 +204,11 @@ function redrawAll(
     width: number;
   }
 ) {
+  // Snapshot render args so image onLoad callbacks can re-trigger drawing
+  _lastCtx = ctx;
+  _lastItems = items;
+  _lastPan = pan;
+  _lastScale = scale;
   const dpr = window.devicePixelRatio || 1;
   // Reset to device-pixel space to clear the full physical canvas
   ctx.resetTransform();
@@ -248,6 +302,14 @@ function hitTest(item: DrawItem, px: number, py: number, tol: number): boolean {
       const maxY = Math.max(item.y1, item.y2) + tol;
       return px >= minX && px <= maxX && py >= minY && py <= maxY;
     }
+    case 'image':
+      // AABB test: is the cursor inside the image rectangle?
+      return (
+        px >= item.x - tol &&
+        px <= item.x + item.w + tol &&
+        py >= item.y - tol &&
+        py <= item.y + item.h + tol
+      );
   }
 }
 
@@ -316,6 +378,17 @@ function drawHighlight(ctx: CanvasRenderingContext2D, item: DrawItem) {
     case 'geom': {
       ctx.globalAlpha = 0.6;
       drawGeom(ctx, item.geomKind, RED, item.width + 3, item.x1, item.y1, item.x2, item.y2);
+      break;
+    }
+    case 'image': {
+      // Translucent red rectangle overlay over the image bounds
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = RED;
+      ctx.fillRect(item.x, item.y, item.w, item.h);
+      ctx.globalAlpha = 0.8;
+      ctx.strokeStyle = RED;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(item.x, item.y, item.w, item.h);
       break;
     }
   }
@@ -413,6 +486,13 @@ const IconHome = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
     <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
     <polyline points="9 22 9 12 15 12 15 22" />
+  </svg>
+);
+const IconPaste = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+    <rect x="8" y="10" width="8" height="6" />
   </svg>
 );
 
@@ -704,6 +784,56 @@ export default function CanvasBoard(): JSX.Element {
     return () => canvas.removeEventListener('wheel', onWheel);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Image paste helpers ──────────────────────────────────────────────────
+
+  // Process a Blob (from ClipboardEvent or Clipboard API) into an ImageItem.
+  // FileReader converts the binary blob to a base64 data URL so we can:
+  //   1. Store it in the DrawItem (survives undo/redo snapshots)
+  //   2. Feed it to <img> via preloadImg for repeated drawImage calls
+  function pasteImageBlob(blob: Blob) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataURL = reader.result as string; // "data:image/png;base64,..."
+      const img = new Image();
+      img.onload = () => {
+        // Auto-scale: fit within 600×450 world units while preserving aspect ratio
+        const MAX_W = 600,
+          MAX_H = 450;
+        const ratio = Math.min(MAX_W / img.naturalWidth, MAX_H / img.naturalHeight, 1);
+        const w = Math.round(img.naturalWidth * ratio);
+        const h = Math.round(img.naturalHeight * ratio);
+        // Place image at the current viewport centre in world coordinates
+        const canvas = canvasRef.current!;
+        const cx = canvas.offsetWidth / 2 / scaleRef.current + panRef.current.x;
+        const cy = canvas.offsetHeight / 2 / scaleRef.current + panRef.current.y;
+        const id = crypto.randomUUID();
+        const item: ImageItem = { kind: 'image', id, dataURL, x: cx - w / 2, y: cy - h / 2, w, h };
+        _imgCache.set(id, img); // pre-populate cache — image is already loaded
+        commit([...itemsRef.current, item]);
+      };
+      img.src = dataURL;
+    };
+    reader.readAsDataURL(blob); // async: triggers onload when conversion is done
+  }
+
+  // Clipboard API button handler (for the toolbar button, not keyboard shortcut).
+  // navigator.clipboard.read() requires HTTPS or localhost.
+  async function pasteFromClipboard() {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find((t) => t.startsWith('image/'));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          pasteImageBlob(blob);
+          return;
+        }
+      }
+    } catch {
+      // Permission denied or no image in clipboard — silently ignore
+    }
+  }
+
   // ── History ──────────────────────────────────────────────────────────────
 
   function commit(next: DrawItem[]) {
@@ -756,6 +886,27 @@ export default function CanvasBoard(): JSX.Element {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [undo, redo]);
+
+  // ── Paste event (Ctrl+V / ⌘V) ─────────────────────────────────────────────
+  // ClipboardEvent fires for Ctrl+V anywhere on the page (no focus required).
+  // We use this instead of (or in addition to) the Clipboard API button because:
+  //   - it works without the clipboard-read permission
+  //   - it fires even when the canvas doesn't have keyboard focus
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      // Don't intercept paste while the user is typing in a text input
+      if (e.target instanceof HTMLInputElement) return;
+      const file = Array.from(e.clipboardData?.items ?? [])
+        .find((item) => item.type.startsWith('image/'))
+        ?.getAsFile();
+      if (file) {
+        e.preventDefault();
+        pasteImageBlob(file);
+      }
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -1122,6 +1273,13 @@ export default function CanvasBoard(): JSX.Element {
         </PillBtn>
         <PillBtn active={tool === 'move'} onClick={() => setTool('move')} title="Move / Pan (V)">
           <IconMove />
+        </PillBtn>
+
+        <Divider />
+
+        {/* Paste image button — triggers clipboard read via Clipboard API */}
+        <PillBtn onClick={pasteFromClipboard} title="Paste image (Ctrl+V)">
+          <IconPaste />
         </PillBtn>
 
         <Divider />
