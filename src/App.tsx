@@ -7,10 +7,11 @@ import CanvasBoard from './components/CanvasBoard';
 const FormulaPage = lazy(() => import('./components/FormulaPage'));
 const SubiectePage = lazy(() => import('./components/SubiectePage'));
 const TestGenerator = lazy(() => import('./components/TestGenerator'));
+const ProblemsReview = lazy(() => import('./components/ProblemsReview'));
 
 // Discriminated union type — all possible page names.
 // TypeScript exhaustively checks every branch against this type.
-type Page = 'board' | 'formulas' | 'subiecte' | 'test';
+type Page = 'board' | 'formulas' | 'subiecte' | 'test' | 'review';
 
 // Generic Suspense wrapper — reused for all lazy pages.
 // The fallback has a dark background to match all page themes.
@@ -65,7 +66,11 @@ export default function App(): JSX.Element {
   if (page === 'subiecte')
     return (
       <PageLoader>
-        <SubiectePage onBack={() => setPage('board')} onOpenTest={() => setPage('test')} />
+        <SubiectePage
+          onBack={() => setPage('board')}
+          onOpenTest={() => setPage('test')}
+          onOpenReview={() => setPage('review')}
+        />
       </PageLoader>
     );
 
@@ -73,6 +78,13 @@ export default function App(): JSX.Element {
     return (
       <PageLoader>
         <TestGenerator onBack={() => setPage('subiecte')} />
+      </PageLoader>
+    );
+
+  if (page === 'review')
+    return (
+      <PageLoader>
+        <ProblemsReview onBack={() => setPage('subiecte')} />
       </PageLoader>
     );
 
