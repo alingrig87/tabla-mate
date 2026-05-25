@@ -1,18 +1,20 @@
 import { useState, Suspense, lazy } from 'react';
+import type { ReactNode } from 'react';
 import CanvasBoard from './components/CanvasBoard';
 
-// React.lazy: FormulaPage and SubiectePage are loaded on demand, not on
-// initial page load. Each becomes a separate chunk in the build output.
+// React.lazy: heavy pages are loaded on demand, not on initial page load.
+// Each becomes a separate chunk in the build output.
 const FormulaPage = lazy(() => import('./components/FormulaPage'));
 const SubiectePage = lazy(() => import('./components/SubiectePage'));
+const TestGenerator = lazy(() => import('./components/TestGenerator'));
 
 // Discriminated union type — all possible page names.
 // TypeScript exhaustively checks every branch against this type.
-type Page = 'board' | 'formulas' | 'subiecte';
+type Page = 'board' | 'formulas' | 'subiecte' | 'test';
 
 // Generic Suspense wrapper — reused for all lazy pages.
-// The fallback has a dark background to match both page themes.
-function PageLoader({ children }: { children: React.ReactNode }) {
+// The fallback has a dark background to match all page themes.
+function PageLoader({ children }: { children: ReactNode }) {
   return (
     <Suspense
       fallback={
@@ -63,7 +65,14 @@ export default function App(): JSX.Element {
   if (page === 'subiecte')
     return (
       <PageLoader>
-        <SubiectePage onBack={() => setPage('board')} />
+        <SubiectePage onBack={() => setPage('board')} onOpenTest={() => setPage('test')} />
+      </PageLoader>
+    );
+
+  if (page === 'test')
+    return (
+      <PageLoader>
+        <TestGenerator onBack={() => setPage('subiecte')} />
       </PageLoader>
     );
 
