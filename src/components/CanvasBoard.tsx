@@ -3,7 +3,7 @@ import React, { useRef, useEffect, useState } from 'react';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 // Tools available — toolbar UI added in commit 07
-type PenTool = 'pen' | 'line' | 'rect' | 'circle';
+type PenTool = 'pen' | 'line' | 'rect' | 'circle' | 'text';
 
 type Point = { x: number; y: number };
 
@@ -24,8 +24,17 @@ interface ShapeItem {
   y2: number;
 }
 
+interface TextItem {
+  kind: 'text';
+  color: string;
+  fontSize: number;
+  x: number; // world coords — where text is drawn
+  y: number;
+  content: string;
+}
+
 // DrawItem union grows with each feature commit
-type DrawItem = PenItem | ShapeItem;
+type DrawItem = PenItem | ShapeItem | TextItem;
 
 // Live preview while dragging a shape (not committed yet)
 interface ShapePreview {
@@ -34,6 +43,16 @@ interface ShapePreview {
   y1: number;
   x2: number;
   y2: number;
+}
+
+// Tracks where the user clicked for a text entry
+// Needs BOTH world coords (for canvas drawText) and screen coords (for CSS overlay)
+interface TextCursor {
+  x: number; // world coords — passed to ctx.fillText
+  y: number;
+  sx: number; // screen coords — used for position: fixed overlay
+  sy: number;
+  value: string;
 }
 
 // ─── Draw helpers ─────────────────────────────────────────────────────────────
@@ -76,6 +95,12 @@ function drawItem(ctx: CanvasRenderingContext2D, item: DrawItem) {
       ctx.stroke();
       break;
     }
+    case 'text':
+      ctx.fillStyle = item.color;
+      ctx.font = `${item.fontSize}px sans-serif`;
+      ctx.textBaseline = 'top';
+      ctx.fillText(item.content, item.x, item.y);
+      break;
   }
   ctx.restore();
 }
@@ -134,6 +159,7 @@ function redrawAll(
 
 const PEN_COLOR = '#1a1a1a';
 const PEN_WIDTH = 3;
+const TEXT_FONT_SIZE = 24;
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -155,6 +181,9 @@ export default function CanvasBoard(): JSX.Element {
 
   const [items, setItems] = useState<DrawItem[]>([]);
   const itemsRef = useRef<DrawItem[]>([]);
+
+  // Text overlay — null when no text input is active
+  const [textCursor, setTextCursor] = useState<TextCursor | null>(null);
 
   // ── Canvas init ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -185,18 +214,57 @@ export default function CanvasBoard(): JSX.Element {
     setItems(next);
   }
 
-  // ── Pointer events ────────────────────────────────────────────────────────
+  // ── Pointer helpers ────────────────────────────────────────────────────────
 
-  function getPos(e: React.PointerEvent): Point {
+  // Screen coords (CSS pixels relative to canvas element)
+  function getScreenPos(e: React.PointerEvent): Point {
     const rect = (e.target as HTMLCanvasElement).getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
+  // World coords — at commit 06 scale=1 / pan=0 so same as screen,
+  // but the separation prepares for pan/zoom in commit 12
+  function getPos(e: React.PointerEvent): Point {
+    return getScreenPos(e);
+  }
+
+  // ── Text: commit or cancel ─────────────────────────────────────────────────
+
+  function commitText(tc: TextCursor) {
+    if (tc.value.trim()) {
+      commit([
+        ...itemsRef.current,
+        {
+          kind: 'text',
+          color: PEN_COLOR,
+          fontSize: TEXT_FONT_SIZE,
+          x: tc.x,
+          y: tc.y,
+          content: tc.value.trim(),
+        },
+      ]);
+    }
+    setTextCursor(null);
+  }
+
+  // ── Pointer events ────────────────────────────────────────────────────────
+
   function pointerDown(e: React.PointerEvent) {
     (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
+    const t = toolRef.current;
+
+    if (t === 'text') {
+      // Commit any existing text cursor first
+      if (textCursor) commitText(textCursor);
+      const pos = getPos(e);
+      const sp = getScreenPos(e);
+      // Store both world (for drawText) and screen (for CSS overlay)
+      setTextCursor({ x: pos.x, y: pos.y, sx: sp.x, sy: sp.y, value: '' });
+      return;
+    }
+
     isDrawingRef.current = true;
     const pos = getPos(e);
-    const t = toolRef.current;
 
     if (t === 'pen') {
       currentPenRef.current = { kind: 'pen', color: PEN_COLOR, width: PEN_WIDTH, points: [pos] };
@@ -264,22 +332,60 @@ export default function CanvasBoard(): JSX.Element {
   }
 
   return (
-    <canvas
-      ref={canvasRef}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        width: '100%',
-        height: '100%',
-        background: '#ffffff',
-        display: 'block',
-        touchAction: 'none',
-        cursor: tool === 'pen' ? 'crosshair' : 'crosshair',
-      }}
-      onPointerDown={pointerDown}
-      onPointerMove={pointerMove}
-      onPointerUp={pointerUp}
-      onPointerLeave={pointerUp}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          background: '#ffffff',
+          display: 'block',
+          touchAction: 'none',
+          cursor: tool === 'text' ? 'text' : 'crosshair',
+        }}
+        onPointerDown={pointerDown}
+        onPointerMove={pointerMove}
+        onPointerUp={pointerUp}
+        onPointerLeave={pointerUp}
+      />
+
+      {/* Text input overlay — rendered as a fixed-position <input> on top of the canvas.
+          Position comes from screen coords (sx, sy), NOT world coords, because
+          position: fixed is relative to the viewport (screen space). */}
+      {textCursor && (
+        <input
+          autoFocus
+          value={textCursor.value}
+          onChange={(e) => setTextCursor({ ...textCursor, value: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commitText(textCursor);
+            }
+            if (e.key === 'Escape') {
+              setTextCursor(null);
+            }
+          }}
+          onBlur={() => commitText(textCursor)}
+          style={{
+            position: 'fixed',
+            left: textCursor.sx,
+            top: textCursor.sy,
+            fontSize: TEXT_FONT_SIZE,
+            fontFamily: 'sans-serif',
+            color: PEN_COLOR,
+            background: 'transparent',
+            border: 'none',
+            outline: '1px dashed #888',
+            padding: '2px 4px',
+            minWidth: 80,
+            zIndex: 10,
+            caretColor: PEN_COLOR,
+          }}
+        />
+      )}
+    </>
   );
 }
