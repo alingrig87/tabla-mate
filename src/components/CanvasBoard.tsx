@@ -512,6 +512,12 @@ const IconFormulas = () => (
     <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
   </svg>
 );
+const IconSubiecte = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <path d="M9 11l3 3L22 4" />
+    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+  </svg>
+);
 
 // ─── Mini-canvas icon for each geometric shape ───────────────────────────────
 // Renders a small preview of each shape using drawGeom on a tiny off-screen canvas.
@@ -606,9 +612,13 @@ const ZOOM_STEPS = [0.1, 0.15, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 2.5
 
 interface CanvasBoardProps {
   onOpenFormulas?: () => void;
+  onOpenSubiecte?: () => void;
 }
 
-export default function CanvasBoard({ onOpenFormulas }: CanvasBoardProps): JSX.Element {
+export default function CanvasBoard({
+  onOpenFormulas,
+  onOpenSubiecte,
+}: CanvasBoardProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [tool, setTool] = useState<PenTool>('pen');
@@ -1462,14 +1472,17 @@ export default function CanvasBoard({ onOpenFormulas }: CanvasBoardProps): JSX.E
           <IconRedo />
         </PillBtn>
 
-        {/* Formulas page — only rendered when the parent passes the callback */}
+        {/* Navigation buttons — only rendered when the parent provides the callbacks */}
+        {(onOpenSubiecte || onOpenFormulas) && <Divider />}
+        {onOpenSubiecte && (
+          <PillBtn onClick={onOpenSubiecte} title="Subiecte EN VIII (2022–2026)">
+            <IconSubiecte />
+          </PillBtn>
+        )}
         {onOpenFormulas && (
-          <>
-            <Divider />
-            <PillBtn onClick={onOpenFormulas} title="Formule matematice (IX–XII)">
-              <IconFormulas />
-            </PillBtn>
-          </>
+          <PillBtn onClick={onOpenFormulas} title="Formule matematice (IX–XII)">
+            <IconFormulas />
+          </PillBtn>
         )}
       </div>
 
