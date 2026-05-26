@@ -7,6 +7,7 @@ import {
   subscribeToBoardItems,
   addItemToBoard,
   removeItemFromBoard,
+  updateItemInBoard,
   createBoard,
   getBoardMeta,
   getBoardsByUser,
@@ -15,7 +16,7 @@ import SharePanel from './SharePanel';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type PenTool = 'pen' | 'eraser' | 'line' | 'rect' | 'circle' | 'text' | 'geom' | 'move';
+type PenTool = 'pen' | 'eraser' | 'line' | 'rect' | 'circle' | 'text' | 'geom' | 'move' | 'select';
 
 type Point = { x: number; y: number };
 
@@ -75,6 +76,8 @@ let _lastCtx: CanvasRenderingContext2D | null = null;
 let _lastItems: DrawItem[] = [];
 let _lastPan: Point = { x: 0, y: 0 };
 let _lastScale = 1;
+// Selection box — preserved so image onLoad callbacks can restore it.
+let _lastSelectionBox: { x: number; y: number; w: number; h: number } | undefined;
 
 function preloadImg(item: ImageItem): HTMLImageElement {
   if (_imgCache.has(item.id)) return _imgCache.get(item.id)!;
@@ -83,7 +86,16 @@ function preloadImg(item: ImageItem): HTMLImageElement {
     // Re-draw with the most recent render parameters once the image has decoded.
     // This fires asynchronously — the ref snapshot is stale-safe because nothing
     // mutates _last* between the preload call and this callback.
-    if (_lastCtx) redrawAll(_lastCtx, _lastItems, _lastPan, _lastScale);
+    if (_lastCtx)
+      redrawAll(
+        _lastCtx,
+        _lastItems,
+        _lastPan,
+        _lastScale,
+        undefined,
+        undefined,
+        _lastSelectionBox
+      );
   };
   img.src = item.dataURL;
   _imgCache.set(item.id, img);
@@ -218,13 +230,15 @@ function redrawAll(
     y2: number;
     color: string;
     width: number;
-  }
+  },
+  selectionBox?: { x: number; y: number; w: number; h: number }
 ) {
   // Snapshot render args so image onLoad callbacks can re-trigger drawing
   _lastCtx = ctx;
   _lastItems = items;
   _lastPan = pan;
   _lastScale = scale;
+  _lastSelectionBox = selectionBox;
   const dpr = window.devicePixelRatio || 1;
   // Reset to device-pixel space to clear the full physical canvas
   ctx.resetTransform();
@@ -247,6 +261,32 @@ function redrawAll(
       geomPreview.x2,
       geomPreview.y2
     );
+  // Selection highlight — dashed blue rect with corner handles, screen-size-stable
+  if (selectionBox) {
+    ctx.save();
+    const vw = 1.5 / scale; // visual stroke width constant in screen pixels
+    const dash = 6 / scale;
+    const gap = 4 / scale;
+    ctx.setLineDash([dash, gap]);
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = vw;
+    ctx.globalAlpha = 0.9;
+    ctx.strokeRect(selectionBox.x, selectionBox.y, selectionBox.w, selectionBox.h);
+    // Small filled corner handles
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#3b82f6';
+    ctx.globalAlpha = 1;
+    const hs = 5 / scale;
+    for (const [hx, hy] of [
+      [selectionBox.x, selectionBox.y],
+      [selectionBox.x + selectionBox.w, selectionBox.y],
+      [selectionBox.x + selectionBox.w, selectionBox.y + selectionBox.h],
+      [selectionBox.x, selectionBox.y + selectionBox.h],
+    ] as [number, number][]) {
+      ctx.fillRect(hx - hs / 2, hy - hs / 2, hs, hs);
+    }
+    ctx.restore();
+  }
   // Note: transform is left active so incremental pen strokes drawn immediately
   // after redrawAll (in pointerMove) are correctly placed in world space.
 }
@@ -411,6 +451,62 @@ function drawHighlight(ctx: CanvasRenderingContext2D, item: DrawItem) {
   ctx.restore();
 }
 
+// ─── Selection helpers ────────────────────────────────────────────────────────
+
+// Axis-aligned bounding box for any DrawItem, expanded by `pad` world units.
+function getBoundingBox(item: DrawItem, pad = 0): { x: number; y: number; w: number; h: number } {
+  switch (item.kind) {
+    case 'pen': {
+      const xs = item.points.map((p) => p.x);
+      const ys = item.points.map((p) => p.y);
+      const minX = Math.min(...xs) - item.width / 2 - pad;
+      const minY = Math.min(...ys) - item.width / 2 - pad;
+      const maxX = Math.max(...xs) + item.width / 2 + pad;
+      const maxY = Math.max(...ys) + item.width / 2 + pad;
+      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    }
+    case 'line': {
+      const minX = Math.min(item.x1, item.x2) - item.width / 2 - pad;
+      const minY = Math.min(item.y1, item.y2) - item.width / 2 - pad;
+      const maxX = Math.max(item.x1, item.x2) + item.width / 2 + pad;
+      const maxY = Math.max(item.y1, item.y2) + item.width / 2 + pad;
+      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    }
+    case 'rect':
+    case 'circle':
+    case 'geom': {
+      const minX = Math.min(item.x1, item.x2) - item.width / 2 - pad;
+      const minY = Math.min(item.y1, item.y2) - item.width / 2 - pad;
+      const maxX = Math.max(item.x1, item.x2) + item.width / 2 + pad;
+      const maxY = Math.max(item.y1, item.y2) + item.width / 2 + pad;
+      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    }
+    case 'text': {
+      const approxW = item.content.length * item.fontSize * 0.55;
+      return { x: item.x - pad, y: item.y - pad, w: approxW + 2 * pad, h: item.fontSize + 2 * pad };
+    }
+    case 'image':
+      return { x: item.x - pad, y: item.y - pad, w: item.w + 2 * pad, h: item.h + 2 * pad };
+  }
+}
+
+// Return a new DrawItem shifted by (dx, dy) in world coordinates.
+function moveItem(item: DrawItem, dx: number, dy: number): DrawItem {
+  switch (item.kind) {
+    case 'pen':
+      return { ...item, points: item.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) };
+    case 'line':
+    case 'rect':
+    case 'circle':
+    case 'geom':
+      return { ...item, x1: item.x1 + dx, y1: item.y1 + dy, x2: item.x2 + dx, y2: item.y2 + dy };
+    case 'text':
+      return { ...item, x: item.x + dx, y: item.y + dy };
+    case 'image':
+      return { ...item, x: item.x + dx, y: item.y + dy };
+  }
+}
+
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
 
 const IC = {
@@ -483,6 +579,12 @@ const IconMove = () => (
     <line x1="12" y1="2" x2="12" y2="22" />
   </svg>
 );
+const IconSelect = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+    {/* Arrow cursor shape */}
+    <path d="M5 2 L5 17 L8.5 13.5 L11.5 20 L13.5 19 L10.5 12.5 L15.5 12.5 Z" />
+  </svg>
+);
 const IconZoomIn = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
     <circle cx="11" cy="11" r="8" />
@@ -525,6 +627,12 @@ const IconFormulas = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
     <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
     <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+  </svg>
+);
+const IconGeometrie = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <polygon points="12 3 2 21 22 21" />
+    <circle cx="12" cy="15" r="3" />
   </svg>
 );
 const IconSubiecte = () => (
@@ -699,12 +807,14 @@ interface CanvasBoardProps {
   onOpenFormulas?: () => void;
   onOpenSubiecte?: () => void;
   onOpenProfile?: () => void;
+  onOpenGeometrie?: () => void;
 }
 
 export default function CanvasBoard({
   onOpenFormulas,
   onOpenSubiecte,
   onOpenProfile,
+  onOpenGeometrie,
 }: CanvasBoardProps): JSX.Element {
   // ── Auth ──────────────────────────────────────────────────────────────────
   const { user: authUser, loading: authLoading, loginWithGoogle } = useAuth();
@@ -755,6 +865,30 @@ export default function CanvasBoard({
   const hoveredIdxRef = useRef<number>(-1);
   // Snapshot taken at the START of an erase drag — single undo entry for the whole drag
   const preEraseSnapshotRef = useRef<DrawItem[] | null>(null);
+
+  // ── Selection tool state ──────────────────────────────────────────────────
+  // selectedId: id of the currently selected item, or null if nothing is selected
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+  // World position where the drag started (for computing dx/dy)
+  const selectAnchorRef = useRef<Point>({ x: 0, y: 0 });
+  // Snapshot of the item as it was when the drag started (source of truth for move)
+  const selectSnapshotRef = useRef<DrawItem | null>(null);
+  // Items array before this drag (for undo entry)
+  const selectOrigItemsRef = useRef<DrawItem[] | null>(null);
+  // true once the pointer has moved beyond the threshold — distinguishes click vs drag
+  const selectHasDraggedRef = useRef(false);
+
+  // Clear selection when the user switches to any other tool
+  useEffect(() => {
+    if (tool !== 'select') {
+      setSelectedId(null);
+      selectedIdRef.current = null;
+    }
+  }, [tool]);
 
   // ── Color & size state ────────────────────────────────────────────────────
   // Both state (for re-render) and ref (for instant access in event handlers)
@@ -812,7 +946,7 @@ export default function CanvasBoard({
       const dpr = window.devicePixelRatio || 1;
       canvas.width = canvas.offsetWidth * dpr;
       canvas.height = canvas.offsetHeight * dpr;
-      redrawAll(canvas.getContext('2d')!, itemsRef.current, panRef.current, scaleRef.current);
+      redraw();
     };
     resize();
     window.addEventListener('resize', resize);
@@ -821,16 +955,15 @@ export default function CanvasBoard({
 
   useEffect(() => {
     itemsRef.current = items;
-    redrawAll(canvasRef.current!.getContext('2d')!, items, panRef.current, scaleRef.current);
-  }, [items]);
+    redraw();
+  }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function getCtx() {
     return canvasRef.current!.getContext('2d')!;
   }
 
   // ── redraw: component-scoped wrapper around the module-level redrawAll ────
-  // Captures the current pan/scale refs so call sites don't repeat them.
-  // Optional overrides let callers pass a live preview without committing it.
+  // Captures current pan/scale refs and computes the selection box automatically.
   function redraw(
     overrideItems?: DrawItem[],
     preview?: { shape: ShapePreview; color: string; width: number },
@@ -844,13 +977,20 @@ export default function CanvasBoard({
       width: number;
     }
   ) {
+    const displayItems = overrideItems ?? itemsRef.current;
+    let selBox: { x: number; y: number; w: number; h: number } | undefined;
+    if (selectedIdRef.current) {
+      const sel = displayItems.find((i) => i.id === selectedIdRef.current);
+      if (sel) selBox = getBoundingBox(sel, 6);
+    }
     redrawAll(
       getCtx(),
-      overrideItems ?? itemsRef.current,
+      displayItems,
       panRef.current,
       scaleRef.current,
       preview,
-      geomPreview
+      geomPreview,
+      selBox
     );
   }
 
@@ -869,7 +1009,7 @@ export default function CanvasBoard({
       y: cy / oldScale + oldPan.y - cy / clamped,
     };
     setZoom(clamped);
-    redrawAll(getCtx(), itemsRef.current, panRef.current, scaleRef.current);
+    redraw();
   }
 
   function zoomIn() {
@@ -895,7 +1035,7 @@ export default function CanvasBoard({
     panRef.current = { x: 0, y: 0 };
     scaleRef.current = 1;
     setZoom(1);
-    redrawAll(getCtx(), itemsRef.current, panRef.current, scaleRef.current);
+    redraw();
   }
 
   // ── Wheel event: zoom (Ctrl/pinch) or pan (two-finger scroll / mouse wheel) ─
@@ -919,7 +1059,7 @@ export default function CanvasBoard({
           x: panRef.current.x + e.deltaX / scaleRef.current,
           y: panRef.current.y + e.deltaY / scaleRef.current,
         };
-        redrawAll(getCtx(), itemsRef.current, panRef.current, scaleRef.current);
+        redraw();
       }
     };
     // { passive: false } required so we can call preventDefault
@@ -984,7 +1124,16 @@ export default function CanvasBoard({
           // so pages appear progressively as they decode.
           const img = new Image();
           img.onload = () => {
-            if (_lastCtx) redrawAll(_lastCtx, _lastItems, _lastPan, _lastScale);
+            if (_lastCtx)
+              redrawAll(
+                _lastCtx,
+                _lastItems,
+                _lastPan,
+                _lastScale,
+                undefined,
+                undefined,
+                _lastSelectionBox
+              );
           };
           img.src = dataURL;
           _imgCache.set(id, img);
@@ -1246,7 +1395,15 @@ export default function CanvasBoard({
         e.preventDefault();
         redo();
       }
-      if (e.key === 'Escape') setShowColorPanel(false);
+      if (e.key === 'Escape') {
+        setShowColorPanel(false);
+        // Deselect current item
+        if (selectedIdRef.current) {
+          setSelectedId(null);
+          selectedIdRef.current = null;
+          redraw();
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -1358,6 +1515,28 @@ export default function CanvasBoard({
     (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
     const t = toolRef.current;
 
+    // Select tool: hit-test to pick an item, then prepare for drag-move
+    if (t === 'select') {
+      const pos = getPos(e);
+      const idx = findTopHit(pos.x, pos.y);
+      if (idx >= 0) {
+        const hit = itemsRef.current[idx];
+        setSelectedId(hit.id);
+        selectedIdRef.current = hit.id;
+        selectAnchorRef.current = pos;
+        selectSnapshotRef.current = hit;
+        selectOrigItemsRef.current = [...itemsRef.current];
+        selectHasDraggedRef.current = false;
+        isDrawingRef.current = true;
+      } else {
+        // Click on empty canvas → deselect
+        setSelectedId(null);
+        selectedIdRef.current = null;
+        redraw();
+      }
+      return;
+    }
+
     // Move tool: start a pan drag
     if (t === 'move') {
       isPanningRef.current = true;
@@ -1409,6 +1588,21 @@ export default function CanvasBoard({
     const sp = getScreenPos(e);
     const t = toolRef.current;
 
+    // Select tool: drag to move the selected item in real-time
+    if (t === 'select') {
+      if (!isDrawingRef.current || !selectSnapshotRef.current) return;
+      const dx = pos.x - selectAnchorRef.current.x;
+      const dy = pos.y - selectAnchorRef.current.y;
+      // Ignore tiny jitter (< 2 world units) before marking as a real drag
+      if (!selectHasDraggedRef.current && Math.abs(dx) < 2 && Math.abs(dy) < 2) return;
+      selectHasDraggedRef.current = true;
+      const movedItem = moveItem(selectSnapshotRef.current, dx, dy);
+      // Mutate the ref directly for live preview (avoids triggering React re-render per frame)
+      itemsRef.current = itemsRef.current.map((i) => (i.id === movedItem.id ? movedItem : i));
+      redraw();
+      return;
+    }
+
     // Move tool: drag to pan the canvas
     if (t === 'move') {
       if (!isPanningRef.current) return;
@@ -1417,7 +1611,7 @@ export default function CanvasBoard({
         x: panOriginRef.current.x - (sp.x - panStartRef.current.x) / scaleRef.current,
         y: panOriginRef.current.y - (sp.y - panStartRef.current.y) / scaleRef.current,
       };
-      redrawAll(getCtx(), itemsRef.current, panRef.current, scaleRef.current);
+      redraw();
       return;
     }
 
@@ -1483,6 +1677,32 @@ export default function CanvasBoard({
 
   function pointerUp(e: React.PointerEvent) {
     const t = toolRef.current;
+
+    // Select tool: commit a drag-move (or just a click → keep selection)
+    if (t === 'select') {
+      isDrawingRef.current = false;
+      if (selectHasDraggedRef.current && selectSnapshotRef.current && selectOrigItemsRef.current) {
+        // Push the pre-move state onto the undo stack as one entry
+        undoRef.current = [...undoRef.current, selectOrigItemsRef.current];
+        redoRef.current = [];
+        setCanUndo(true);
+        setCanRedo(false);
+        // Trigger React re-render with the final moved position
+        setItems([...itemsRef.current]);
+
+        // Sync the moved item to Firestore (collaborative boards)
+        const bid = boardIdRef.current;
+        const movedItem = itemsRef.current.find((i) => i.id === selectedIdRef.current);
+        if (bid && movedItem && movedItem.kind !== 'image') {
+          const { id, ...data } = movedItem as DrawItem & { id: string };
+          updateItemInBoard(bid, id, data as Record<string, unknown>).catch(console.error);
+        }
+      }
+      selectSnapshotRef.current = null;
+      selectOrigItemsRef.current = null;
+      selectHasDraggedRef.current = false;
+      return;
+    }
 
     // Move tool: end pan drag
     if (t === 'move') {
@@ -1585,9 +1805,11 @@ export default function CanvasBoard({
                 ? isPanning
                   ? 'grabbing'
                   : 'grab'
-                : tool === 'text'
-                  ? 'text'
-                  : 'crosshair',
+                : tool === 'select'
+                  ? 'default'
+                  : tool === 'text'
+                    ? 'text'
+                    : 'crosshair',
         }}
         onPointerDown={pointerDown}
         onPointerMove={pointerMove}
@@ -1646,7 +1868,14 @@ export default function CanvasBoard({
         >
           <IconShapes />
         </PillBtn>
-        <PillBtn active={tool === 'move'} onClick={() => setTool('move')} title="Move / Pan (V)">
+        <PillBtn
+          active={tool === 'select'}
+          onClick={() => setTool('select')}
+          title="Select & Move item (S)"
+        >
+          <IconSelect />
+        </PillBtn>
+        <PillBtn active={tool === 'move'} onClick={() => setTool('move')} title="Pan canvas (V)">
           <IconMove />
         </PillBtn>
 
@@ -1736,6 +1965,11 @@ export default function CanvasBoard({
         {onOpenSubiecte && (
           <PillBtn onClick={onOpenSubiecte} title="Subiecte EN VIII (2022–2026)">
             <IconSubiecte />
+          </PillBtn>
+        )}
+        {onOpenGeometrie && (
+          <PillBtn onClick={onOpenGeometrie} title="Figuri geometrice — arii & volume">
+            <IconGeometrie />
           </PillBtn>
         )}
         {onOpenFormulas && (

@@ -80,6 +80,16 @@ export async function removeItemFromBoard(boardId: string, itemId: string): Prom
   await deleteDoc(doc(db, 'boards', boardId, 'items', itemId));
 }
 
+// Partially update a single item in Firestore (used to sync a moved item).
+export async function updateItemInBoard(
+  boardId: string,
+  itemId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: Record<string, any>
+): Promise<void> {
+  await updateDoc(doc(db, 'boards', boardId, 'items', itemId), data);
+}
+
 // ─── Board CRUD ───────────────────────────────────────────────────────────────
 
 export interface BoardMeta {
