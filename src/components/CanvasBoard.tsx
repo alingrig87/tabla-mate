@@ -1141,24 +1141,26 @@ export default function CanvasBoard({
   }, [boardId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Create & join board ────────────────────────────────────────────────────
-  async function createAndJoinBoard() {
+  // Optimistic: open the board immediately, write to Firestore in background.
+  // The local Firestore listener will confirm once the write lands; meanwhile
+  // the canvas is fully usable and any strokes are queued in pendingUploadIds.
+  function createAndJoinBoard() {
     const newBoardId = crypto.randomUUID().slice(0, 8);
     const title = `Tablă · ${new Date().toLocaleDateString('ro-RO', { day: 'numeric', month: 'long' })}`;
-    try {
-      await createBoard(newBoardId, authUser?.uid ?? 'anon', title);
-    } catch (err) {
-      console.error('[Board] create error:', err);
-      alert('Nu am putut crea tabla. Verifică conexiunea.');
-      return;
-    }
-    // Update URL without full page reload so sharing the tab URL works immediately
+
+    // 1. Update UI immediately — no waiting for network
     const url = new URL(window.location.href);
     url.searchParams.set('board', newBoardId);
     window.history.pushState({}, '', url.toString());
-
     setBoardTitle(title);
     setBoardId(newBoardId);
     setShowSharePanel(true);
+
+    // 2. Persist to Firestore in background
+    createBoard(newBoardId, authUser?.uid ?? 'anon', title).catch((err) => {
+      console.error('[Board] create error:', err);
+      // Non-blocking error — board is usable locally; sync may catch up later
+    });
   }
 
   function commit(next: DrawItem[]) {

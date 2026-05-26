@@ -84,23 +84,22 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
 
   // ── Actions ──────────────────────────────────────────────────────────────
 
-  async function handleCreate() {
+  function handleCreate() {
     if (!user || creating) return;
     setCreating(true);
     const newId = crypto.randomUUID().slice(0, 8);
     const title = boardAutoTitle();
-    try {
-      await createBoard(newId, user.uid, title);
-    } catch {
-      setError('Nu am putut crea tabla.');
-      setCreating(false);
-      return;
-    }
-    // Navigate to the new board
+
+    // 1. Navigate immediately — no waiting for Firestore
     const url = new URL(window.location.href);
     url.searchParams.set('board', newId);
     window.history.pushState({}, '', url.toString());
     onOpenBoard(newId);
+
+    // 2. Persist to Firestore in background
+    createBoard(newId, user.uid, title).catch(() => {
+      setError('Nu am putut salva tabla. Verifică conexiunea.');
+    });
   }
 
   async function handleDelete(id: string) {
