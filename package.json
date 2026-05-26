@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@types/katex": "^0.16.8",
+    "firebase": "^12.13.0",
     "katex": "^0.17.0",
     "pdfjs-dist": "^5.7.284",
     "react": "^18.2.0",
@@ -45,9 +46,19 @@
     }
   },
   "lint-staged": {
-    "*.{ts,tsx}": ["eslint --fix", "prettier --write"],
-    "*.{js,jsx}": ["eslint --fix", "prettier --write"],
-    "*.json": ["prettier --write"],
-    "*.md": ["prettier --write"]
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.json": [
+      "prettier --write"
+    ],
+    "*.md": [
+      "prettier --write"
+    ]
   }
 }

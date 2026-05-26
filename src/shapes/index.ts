@@ -38,6 +38,7 @@ export type GeomKind =
 
 export interface GeomItem {
   kind: 'geom'; // discriminator unic în DrawItem
+  id: string; // stable UUID — used as Firestore document id in collaborative mode
   geomKind: GeomKind; // figura concretă
   color: string;
   width: number;

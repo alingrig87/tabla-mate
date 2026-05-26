@@ -1,6 +1,13 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { GeomKind, GeomItem, SHAPE_GROUPS, drawGeom, drawGeomPreview } from '../shapes';
 import { SUBIECTE } from '../data/subiecte';
+import { useAuth } from '../context/AuthContext';
+import {
+  subscribeToBoardItems,
+  addItemToBoard,
+  removeItemFromBoard,
+  createBoard,
+} from '../lib/boardSync';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -10,6 +17,7 @@ type Point = { x: number; y: number };
 
 interface PenItem {
   kind: 'pen';
+  id: string; // stable UUID — Firestore doc id in collaborative mode
   color: string;
   width: number;
   points: Point[];
@@ -17,6 +25,7 @@ interface PenItem {
 
 interface ShapeItem {
   kind: 'line' | 'rect' | 'circle';
+  id: string; // stable UUID — Firestore doc id in collaborative mode
   color: string;
   width: number;
   x1: number;
@@ -27,6 +36,7 @@ interface ShapeItem {
 
 interface TextItem {
   kind: 'text';
+  id: string; // stable UUID — Firestore doc id in collaborative mode
   color: string;
   fontSize: number;
   x: number;
@@ -35,10 +45,11 @@ interface TextItem {
 }
 
 // Images are stored as data URLs so they survive undo/redo snapshots.
-// Each image has a unique id used as cache key.
+// Each image has a unique id used as image-cache key.
+// NOTE: ImageItems are NOT synced to Firestore (base64 data can exceed 1 MB).
 interface ImageItem {
   kind: 'image';
-  id: string; // crypto.randomUUID() — used as cache key
+  id: string; // crypto.randomUUID() — image cache key; also used as local-only id
   dataURL: string; // base64-encoded PNG/JPEG — serialisable, survives snapshots
   x: number; // world coords of the top-left corner
   y: number;
@@ -518,6 +529,22 @@ const IconSubiecte = () => (
     <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
   </svg>
 );
+// ── Collaborative / auth icons ────────────────────────────────────────────────
+const IconShare = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <circle cx="18" cy="5" r="3" />
+    <circle cx="6" cy="12" r="3" />
+    <circle cx="18" cy="19" r="3" />
+    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+  </svg>
+);
+const IconUser = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+    <circle cx="12" cy="7" r="4" />
+  </svg>
+);
 
 // ─── Mini-canvas icon for each geometric shape ───────────────────────────────
 // Renders a small preview of each shape using drawGeom on a tiny off-screen canvas.
@@ -619,6 +646,27 @@ export default function CanvasBoard({
   onOpenFormulas,
   onOpenSubiecte,
 }: CanvasBoardProps): JSX.Element {
+  // ── Auth ──────────────────────────────────────────────────────────────────
+  const { user: authUser, loginWithGoogle, logout } = useAuth();
+
+  // ── Collaborative board state ────────────────────────────────────────────
+  // boardId is read from ?board=xxx URL param on load; set when creating a board.
+  const [boardId, setBoardId] = useState<string | null>(() => {
+    return new URLSearchParams(window.location.search).get('board');
+  });
+  // Stable ref so sync helpers can read boardId without stale closures
+  const boardIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    boardIdRef.current = boardId;
+  }, [boardId]);
+
+  const [showSharePanel, setShowSharePanel] = useState(false);
+  const [copyLabel, setCopyLabel] = useState('Copiază');
+
+  // IDs of items uploaded by THIS client but not yet confirmed by Firestore.
+  // Prevents the Firestore echo from double-adding our own strokes.
+  const pendingUploadIds = useRef<Set<string>>(new Set());
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [tool, setTool] = useState<PenTool>('pen');
@@ -952,16 +1000,107 @@ export default function CanvasBoard({
 
   // ── History ──────────────────────────────────────────────────────────────
 
+  // ── Firestore sync helpers ────────────────────────────────────────────────
+  // syncDiff compares two DrawItem arrays and propagates the delta to Firestore.
+  // It is called from commit() and from the eraser pointerUp handler.
+  //
+  // Limitations (v1):
+  //   - ImageItems (kind:'image') are NOT synced — their base64 dataURLs can
+  //     exceed Firestore's 1 MB per-document limit.
+  //   - Undo/redo are disabled while in collaborative mode to avoid one user's
+  //     undo accidentally deleting another user's strokes.
+  function syncDiff(prev: DrawItem[], next: DrawItem[]) {
+    const bid = boardIdRef.current;
+    if (!bid) return;
+
+    const prevIds = new Set(prev.map((i) => i.id).filter(Boolean));
+    const nextIds = new Set(next.map((i) => i.id).filter(Boolean));
+
+    // Added items → write to Firestore
+    for (const item of next) {
+      if (!item.id || prevIds.has(item.id)) continue;
+      if (item.kind === 'image') continue; // skip — too large for Firestore docs
+      pendingUploadIds.current.add(item.id);
+      // Exclude id from the stored data (it's the doc id, not a field)
+      const { id, ...data } = item as DrawItem & { id: string };
+      addItemToBoard(bid, id, data as Record<string, unknown>, authUser?.uid ?? 'anon')
+        .then(() => pendingUploadIds.current.delete(id))
+        .catch(console.error);
+    }
+
+    // Removed items → delete from Firestore
+    for (const item of prev) {
+      if (!item.id || nextIds.has(item.id)) continue;
+      removeItemFromBoard(bid, item.id).catch(console.error);
+    }
+  }
+
+  // ── Firestore subscription ─────────────────────────────────────────────────
+  // When boardId is set (join or create), subscribe to all items in that board.
+  // The merge logic:
+  //   1. Accept the Firestore snapshot as the authoritative list
+  //   2. Keep locally-pending items (uploaded but not yet confirmed) to avoid flicker
+  useEffect(() => {
+    if (!boardId) return;
+    const unsub = subscribeToBoardItems(boardId, (remoteItems) => {
+      setItems((prev) => {
+        const remoteIds = new Set(remoteItems.map((ri) => ri.id));
+
+        // Locally-pending: written to Firestore but not yet in this snapshot
+        const pending = prev.filter(
+          (item) => item.id && !remoteIds.has(item.id) && pendingUploadIds.current.has(item.id)
+        );
+
+        // Convert remote items back to DrawItem (strip authorId — canvas doesn't need it)
+        const fromRemote = remoteItems.map(
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          ({ id, authorId: _a, ...data }) => ({ ...data, id }) as DrawItem
+        );
+
+        return [...fromRemote, ...pending];
+      });
+    });
+    return unsub;
+  }, [boardId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Create & join board ────────────────────────────────────────────────────
+  async function createAndJoinBoard() {
+    const newBoardId = crypto.randomUUID().slice(0, 8);
+    try {
+      await createBoard(newBoardId, authUser?.uid ?? 'anon');
+    } catch (err) {
+      console.error('[Board] create error:', err);
+      alert('Nu am putut crea tabla. Verifică conexiunea.');
+      return;
+    }
+    // Update URL without full page reload so sharing the tab URL works immediately
+    const url = new URL(window.location.href);
+    url.searchParams.set('board', newBoardId);
+    window.history.pushState({}, '', url.toString());
+
+    setBoardId(newBoardId);
+    setShowSharePanel(true);
+  }
+
+  function getShareUrl(): string {
+    const url = new URL(window.location.href);
+    url.searchParams.set('board', boardId ?? '');
+    return url.toString();
+  }
+
   function commit(next: DrawItem[]) {
-    undoRef.current = [...undoRef.current, itemsRef.current];
+    const prev = itemsRef.current;
+    undoRef.current = [...undoRef.current, prev];
     redoRef.current = [];
     setCanUndo(true);
     setCanRedo(false);
     setItems(next);
+    syncDiff(prev, next);
   }
 
   // useCallback gives undo/redo a stable reference so the keydown useEffect
-  // can list them as deps without re-subscribing on every render
+  // can list them as deps without re-subscribing on every render.
+  // In collaborative mode undo/redo are disabled (see toolbar below).
   const undo = useCallback(() => {
     if (!undoRef.current.length) return;
     const prev = undoRef.current[undoRef.current.length - 1];
@@ -1054,6 +1193,7 @@ export default function CanvasBoard({
         ...itemsRef.current,
         {
           kind: 'text',
+          id: crypto.randomUUID(),
           color: colorRef.current,
           fontSize: TEXT_FONT_SIZE,
           x: tc.x,
@@ -1144,6 +1284,7 @@ export default function CanvasBoard({
     if (t === 'pen') {
       currentPenRef.current = {
         kind: 'pen',
+        id: crypto.randomUUID(),
         color: colorRef.current,
         width: penSizeRef.current,
         points: [pos],
@@ -1244,11 +1385,13 @@ export default function CanvasBoard({
       isDrawingRef.current = false;
       // Commit the entire drag as ONE undo entry using the snapshot from drag start
       if (preEraseSnapshotRef.current !== null) {
-        undoRef.current = [...undoRef.current, preEraseSnapshotRef.current];
+        const snapshot = preEraseSnapshotRef.current;
+        undoRef.current = [...undoRef.current, snapshot];
         redoRef.current = [];
         setCanUndo(true);
         setCanRedo(false);
         setItems(itemsRef.current); // trigger React re-render with final state
+        syncDiff(snapshot, itemsRef.current); // sync erasures to Firestore
         preEraseSnapshotRef.current = null;
       }
       return;
@@ -1272,6 +1415,7 @@ export default function CanvasBoard({
         ...itemsRef.current,
         {
           kind: t,
+          id: crypto.randomUUID(),
           color: colorRef.current,
           width: penSizeRef.current,
           x1,
@@ -1290,6 +1434,7 @@ export default function CanvasBoard({
         ...itemsRef.current,
         {
           kind: 'geom',
+          id: crypto.randomUUID(),
           geomKind: activeGeomRef.current,
           color: colorRef.current,
           width: penSizeRef.current,
@@ -1488,6 +1633,91 @@ export default function CanvasBoard({
             <IconFormulas />
           </PillBtn>
         )}
+
+        <Divider />
+
+        {/* ── Share button ─────────────────────────────────────────────────
+            Creates a new board (or shows the existing link) for collaborative
+            drawing. A green live-dot appears on the button when a board is
+            active to indicate collaborative mode.                            */}
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          <PillBtn
+            active={showSharePanel}
+            onClick={boardId ? () => setShowSharePanel((v) => !v) : createAndJoinBoard}
+            title={boardId ? 'Link tablă colaborativă' : 'Creează tablă colaborativă'}
+          >
+            <IconShare />
+          </PillBtn>
+          {/* Green dot: collaborative mode is active */}
+          {boardId && (
+            <span
+              style={{
+                position: 'absolute',
+                top: 4,
+                right: 4,
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: '#22c55e',
+                border: '1.5px solid #fff',
+                pointerEvents: 'none',
+              }}
+            />
+          )}
+        </div>
+
+        {/* ── Login / Avatar button ────────────────────────────────────────
+            Shows a person icon when logged out; shows the Google avatar
+            (or initial) when logged in. Clicking the avatar logs out.       */}
+        {!authUser ? (
+          <PillBtn onClick={loginWithGoogle} title="Login cu Google (opțional)">
+            <IconUser />
+          </PillBtn>
+        ) : (
+          <button
+            onClick={logout}
+            title={`${authUser.displayName ?? authUser.email} — Click pentru logout`}
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: '50%',
+              border: 'none',
+              padding: 3,
+              cursor: 'pointer',
+              background: 'transparent',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            {authUser.photoURL ? (
+              <img
+                src={authUser.photoURL}
+                referrerPolicy="no-referrer"
+                style={{ width: 32, height: 32, borderRadius: '50%' }}
+                alt={authUser.displayName ?? 'avatar'}
+              />
+            ) : (
+              <div
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: '50%',
+                  background: '#4f46e5',
+                  color: '#fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 13,
+                  fontWeight: 700,
+                }}
+              >
+                {(authUser.displayName ?? authUser.email ?? 'U')[0].toUpperCase()}
+              </div>
+            )}
+          </button>
+        )}
       </div>
 
       {/* ── Color & size panel ────────────────────────────────────────────
@@ -1587,6 +1817,116 @@ export default function CanvasBoard({
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Share panel ───────────────────────────────────────────────────
+          Appears when the share button is clicked while in collaborative mode.
+          Shows the shareable URL and a copy button.                          */}
+      {showSharePanel && boardId && (
+        <div
+          data-panel
+          style={{
+            position: 'fixed',
+            top: 68,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#fff',
+            borderRadius: 16,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+            padding: '18px 20px',
+            zIndex: 20,
+            minWidth: 300,
+            maxWidth: 'calc(100vw - 32px)',
+            userSelect: 'none',
+          }}
+        >
+          {/* Header */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginBottom: 14,
+            }}
+          >
+            {/* Live green dot */}
+            <span
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: '50%',
+                background: '#22c55e',
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#111' }}>
+              Tablă colaborativă activă
+            </span>
+            <button
+              onClick={() => setShowSharePanel(false)}
+              style={{
+                marginLeft: 'auto',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                color: '#888',
+                fontSize: 16,
+                lineHeight: 1,
+                padding: '0 2px',
+              }}
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* URL row */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <input
+              readOnly
+              value={getShareUrl()}
+              onFocus={(e) => e.currentTarget.select()}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                padding: '7px 10px',
+                borderRadius: 8,
+                border: '1px solid #ddd',
+                fontSize: 12,
+                fontFamily: 'monospace',
+                background: '#f5f5f5',
+                color: '#333',
+              }}
+            />
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(getShareUrl()).then(() => {
+                  setCopyLabel('Copiat! ✓');
+                  setTimeout(() => setCopyLabel('Copiază'), 2000);
+                });
+              }}
+              style={{
+                padding: '7px 14px',
+                borderRadius: 8,
+                border: 'none',
+                background: '#1a1a1a',
+                color: '#fff',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                flexShrink: 0,
+                transition: 'background 0.15s',
+              }}
+            >
+              {copyLabel}
+            </button>
+          </div>
+
+          <p style={{ margin: 0, fontSize: 12, color: '#666', lineHeight: 1.5 }}>
+            Trimite link-ul oricui vrei să deseneze împreună cu tine.
+            <br />
+            Nu e nevoie de cont pentru a participa.
+          </p>
         </div>
       )}
 
