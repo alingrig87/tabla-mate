@@ -18,6 +18,7 @@ import { db } from './firebase';
 import {
   collection,
   doc,
+  getDoc,
   setDoc,
   updateDoc,
   deleteDoc,
@@ -115,6 +116,18 @@ export async function getBoardsByUser(userId: string): Promise<BoardMeta[]> {
       createdBy: d.data().createdBy as string,
     }))
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+// Fetch title + metadata for a single board (returns null if board doesn't exist).
+export async function getBoardMeta(boardId: string): Promise<BoardMeta | null> {
+  const snap = await getDoc(doc(db, 'boards', boardId));
+  if (!snap.exists()) return null;
+  return {
+    id: snap.id,
+    title: (snap.data().title as string) || `Tablă ${snap.id}`,
+    createdAt: (snap.data().createdAt?.toDate() as Date) ?? new Date(),
+    createdBy: snap.data().createdBy as string,
+  };
 }
 
 // Delete a board and ALL its items (Firestore doesn't cascade deletes).

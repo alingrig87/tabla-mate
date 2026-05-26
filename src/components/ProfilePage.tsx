@@ -1,11 +1,12 @@
 /**
- * ProfilePage — shows the logged-in user's boards.
+ * ProfilePage — shows the logged-in user's boards + received invites.
  *
  * Features:
  *   - User avatar, name, email
  *   - List of boards: title, date, open / delete
  *   - Inline rename (click title → editable input)
  *   - "Tablă nouă" button — creates a board and navigates straight into it
+ *   - "Invitații primite" — invites sent to user's email; accept = open board
  */
 
 import { useState, useEffect } from 'react';
@@ -13,6 +14,8 @@ import type { CSSProperties } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getBoardsByUser, deleteBoard, updateBoardTitle, createBoard } from '../lib/boardSync';
 import type { BoardMeta } from '../lib/boardSync';
+import { getInvitesForUser, removeInvite } from '../lib/invites';
+import type { InviteRecord } from '../lib/invites';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -54,6 +57,11 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
   // Creating a new board
   const [creating, setCreating] = useState(false);
 
+  // Received invites
+  const [invites, setInvites] = useState<InviteRecord[]>([]);
+  const [loadingInvites, setLoadingInvites] = useState(false);
+  const [dismissingId, setDismissingId] = useState<string | null>(null);
+
   // Load boards on mount
   useEffect(() => {
     if (!user) return;
@@ -62,6 +70,16 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
       .then(setBoards)
       .catch(() => setError('Nu am putut încărca tablele.'))
       .finally(() => setLoading(false));
+  }, [user]);
+
+  // Load invites on mount
+  useEffect(() => {
+    if (!user?.email) return;
+    setLoadingInvites(true);
+    getInvitesForUser(user.email)
+      .then(setInvites)
+      .catch(console.error)
+      .finally(() => setLoadingInvites(false));
   }, [user]);
 
   // ── Actions ──────────────────────────────────────────────────────────────
@@ -127,6 +145,26 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
     url.searchParams.set('board', boardId);
     window.history.pushState({}, '', url.toString());
     onOpenBoard(boardId);
+  }
+
+  // Accept an invite: navigate to the board, then optionally remove the invite
+  function handleAcceptInvite(invite: InviteRecord) {
+    handleOpen(invite.boardId);
+    // Non-blocking dismiss after navigating away
+    removeInvite(invite.id).catch(console.error);
+  }
+
+  // Dismiss (decline) an invite without opening
+  async function handleDismissInvite(invite: InviteRecord) {
+    setDismissingId(invite.id);
+    try {
+      await removeInvite(invite.id);
+      setInvites((prev) => prev.filter((i) => i.id !== invite.id));
+    } catch {
+      setError('Nu am putut respinge invitația.');
+    } finally {
+      setDismissingId(null);
+    }
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -257,6 +295,54 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
               </div>
             ))}
           </div>
+        )}
+
+        {/* ── Received invites section ──────────────────────────────────── */}
+        {(loadingInvites || invites.length > 0) && (
+          <>
+            <div style={{ ...s.sectionHeader, marginTop: 28 }}>
+              <span style={s.sectionTitle}>📬 Invitații primite</span>
+            </div>
+
+            {loadingInvites ? (
+              <div style={{ ...s.emptyState, padding: '20px' }}>Se încarcă…</div>
+            ) : (
+              <div style={s.list}>
+                {invites.map((inv) => (
+                  <div key={inv.id} style={s.inviteCard}>
+                    <div style={s.cardLeft}>
+                      <span style={s.inviteTitle}>{inv.boardTitle}</span>
+                      <span style={s.dateLabel}>
+                        De la <strong style={{ color: '#a0aec0' }}>{inv.invitedByName}</strong>
+                        {' · '}
+                        {formatDate(inv.invitedAt)}
+                      </span>
+                    </div>
+                    <div style={s.cardActions}>
+                      <button
+                        onClick={() => handleAcceptInvite(inv)}
+                        style={s.openBtn}
+                        title="Deschide tabla"
+                      >
+                        Acceptă
+                      </button>
+                      <button
+                        onClick={() => handleDismissInvite(inv)}
+                        disabled={dismissingId === inv.id}
+                        style={{
+                          ...s.deleteBtn,
+                          opacity: dismissingId === inv.id ? 0.4 : 1,
+                        }}
+                        title="Respinge invitația"
+                      >
+                        {dismissingId === inv.id ? '…' : '✕'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -487,5 +573,26 @@ const s: Record<string, CSSProperties> = {
     cursor: 'pointer',
     fontSize: 14,
     transition: 'background 0.15s',
+  },
+  inviteCard: {
+    background: '#16181f',
+    border: '1px solid #3730a344',
+    borderLeft: '3px solid #4f46e5',
+    borderRadius: 12,
+    padding: '14px 18px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap' as const,
+    transition: 'border-color 0.15s',
+  },
+  inviteTitle: {
+    fontSize: 14,
+    fontWeight: 600,
+    color: '#c7d2fe',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const,
+    maxWidth: '100%',
   },
 };

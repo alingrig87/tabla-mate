@@ -8,7 +8,9 @@ import {
   addItemToBoard,
   removeItemFromBoard,
   createBoard,
+  getBoardMeta,
 } from '../lib/boardSync';
+import SharePanel from './SharePanel';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -718,7 +720,11 @@ export default function CanvasBoard({
   }, [boardId]);
 
   const [showSharePanel, setShowSharePanel] = useState(false);
-  const [copyLabel, setCopyLabel] = useState('Copiază');
+  // Human-readable title for this board — shown in invite notifications
+  const [boardTitle, setBoardTitle] = useState<string>(() => {
+    // Will be overwritten once we fetch metadata (if loading from URL)
+    return `Tablă · ${new Date().toLocaleDateString('ro-RO', { day: 'numeric', month: 'long' })}`;
+  });
 
   // IDs of items uploaded by THIS client but not yet confirmed by Firestore.
   // Prevents the Firestore echo from double-adding our own strokes.
@@ -1120,6 +1126,20 @@ export default function CanvasBoard({
     return unsub;
   }, [boardId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Fetch board metadata when loading from URL ────────────────────────────
+  // When the user opens a shared URL (?board=xxx), fetch the board title so the
+  // invite panel can show a meaningful name.
+  useEffect(() => {
+    if (!boardId) return;
+    getBoardMeta(boardId)
+      .then((meta) => {
+        if (meta) setBoardTitle(meta.title);
+      })
+      .catch(() => {
+        /* non-critical — default title is fine */
+      });
+  }, [boardId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Create & join board ────────────────────────────────────────────────────
   async function createAndJoinBoard() {
     const newBoardId = crypto.randomUUID().slice(0, 8);
@@ -1136,14 +1156,9 @@ export default function CanvasBoard({
     url.searchParams.set('board', newBoardId);
     window.history.pushState({}, '', url.toString());
 
+    setBoardTitle(title);
     setBoardId(newBoardId);
     setShowSharePanel(true);
-  }
-
-  function getShareUrl(): string {
-    const url = new URL(window.location.href);
-    url.searchParams.set('board', boardId ?? '');
-    return url.toString();
   }
 
   function commit(next: DrawItem[]) {
@@ -1878,114 +1893,14 @@ export default function CanvasBoard({
         </div>
       )}
 
-      {/* ── Share panel ───────────────────────────────────────────────────
-          Appears when the share button is clicked while in collaborative mode.
-          Shows the shareable URL and a copy button.                          */}
+      {/* ── Share / invite panel ──────────────────────────────────────────
+          Extracted into SharePanel for invite + contacts autocomplete.       */}
       {showSharePanel && boardId && (
-        <div
-          data-panel
-          style={{
-            position: 'fixed',
-            top: 68,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: '#fff',
-            borderRadius: 16,
-            boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-            padding: '18px 20px',
-            zIndex: 20,
-            minWidth: 300,
-            maxWidth: 'calc(100vw - 32px)',
-            userSelect: 'none',
-          }}
-        >
-          {/* Header */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              marginBottom: 14,
-            }}
-          >
-            {/* Live green dot */}
-            <span
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: '50%',
-                background: '#22c55e',
-                flexShrink: 0,
-              }}
-            />
-            <span style={{ fontSize: 14, fontWeight: 700, color: '#111' }}>
-              Tablă colaborativă activă
-            </span>
-            <button
-              onClick={() => setShowSharePanel(false)}
-              style={{
-                marginLeft: 'auto',
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                color: '#888',
-                fontSize: 16,
-                lineHeight: 1,
-                padding: '0 2px',
-              }}
-            >
-              ✕
-            </button>
-          </div>
-
-          {/* URL row */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-            <input
-              readOnly
-              value={getShareUrl()}
-              onFocus={(e) => e.currentTarget.select()}
-              style={{
-                flex: 1,
-                minWidth: 0,
-                padding: '7px 10px',
-                borderRadius: 8,
-                border: '1px solid #ddd',
-                fontSize: 12,
-                fontFamily: 'monospace',
-                background: '#f5f5f5',
-                color: '#333',
-              }}
-            />
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText(getShareUrl()).then(() => {
-                  setCopyLabel('Copiat! ✓');
-                  setTimeout(() => setCopyLabel('Copiază'), 2000);
-                });
-              }}
-              style={{
-                padding: '7px 14px',
-                borderRadius: 8,
-                border: 'none',
-                background: '#1a1a1a',
-                color: '#fff',
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: 'pointer',
-                flexShrink: 0,
-                transition: 'background 0.15s',
-              }}
-            >
-              {copyLabel}
-            </button>
-          </div>
-
-          <p style={{ margin: 0, fontSize: 12, color: '#666', lineHeight: 1.5 }}>
-            Trimite link-ul oricui vrei să deseneze împreună cu tine.
-            <br />
-            Nu e nevoie de cont pentru a participa.
-          </p>
-        </div>
+        <SharePanel
+          boardId={boardId}
+          boardTitle={boardTitle}
+          onClose={() => setShowSharePanel(false)}
+        />
       )}
 
       {/* ── Hidden file input for PDF disk import ───────────────────────── */}
