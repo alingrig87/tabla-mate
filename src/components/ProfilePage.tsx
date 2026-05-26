@@ -287,6 +287,13 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
           <span style={s.boardCount}>
             {boards.length} {boards.length === 1 ? 'tablă' : 'table'}
           </span>
+          <button
+            onClick={handleCreate}
+            disabled={creating}
+            style={{ ...s.newBtn, opacity: creating ? 0.6 : 1, marginLeft: 'auto' }}
+          >
+            {creating ? 'Se creează…' : '+ Tablă nouă'}
+          </button>
         </div>
 
         {/* Board grid */}
@@ -616,6 +623,18 @@ const s: Record<string, CSSProperties> = {
     background: '#1e2030',
     borderRadius: 20,
     padding: '2px 10px',
+  },
+  newBtn: {
+    background: '#4f46e5',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '7px 16px',
+    cursor: 'pointer',
+    fontSize: 13,
+    fontWeight: 600,
+    transition: 'background 0.15s',
+    flexShrink: 0,
   },
   grid: {
     display: 'grid',
