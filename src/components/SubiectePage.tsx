@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { CSSProperties } from 'react';
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
@@ -115,14 +115,60 @@ export default function SubiectePage({ onBack, onOpenTest, onOpenReview }: Props
   // Whether we're showing the exam paper or the answer key
   const [viewMode, setViewMode] = useState<'subiect' | 'barem'>('subiect');
 
+  // ── Responsive state ─────────────────────────────────────────────────────
+  // On narrow screens (< 640px) the sidebar hides and slides in as a drawer.
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 640);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = () => {
+      const mobile = window.innerWidth < 640;
+      setIsMobile(mobile);
+      if (!mobile) setSidebarOpen(false); // auto-close drawer when resizing to desktop
+    };
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+
   // The iframe URL: barem if available and selected, otherwise subiect
   const currentUrl =
     viewMode === 'barem' && selected.baremUrl ? selected.baremUrl : selected.subiectUrl;
 
+  // Computed sidebar style: overlay drawer on mobile, normal column on desktop
+  const sidebarStyle: CSSProperties = isMobile
+    ? {
+        ...styles.sidebar,
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        height: '100%',
+        zIndex: 50,
+        transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
+        transition: 'transform 0.25s ease',
+        boxShadow: sidebarOpen ? '4px 0 24px rgba(0,0,0,0.6)' : 'none',
+        width: 260,
+        minWidth: 260,
+      }
+    : styles.sidebar;
+
   return (
     <div style={styles.root}>
+      {/* ── Mobile backdrop — tap to close sidebar ──────────────────────── */}
+      {isMobile && sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.55)',
+            zIndex: 49,
+            cursor: 'pointer',
+          }}
+        />
+      )}
+
       {/* ── Sidebar ────────────────────────────────────────────────────────── */}
-      <aside style={styles.sidebar}>
+      <aside style={sidebarStyle}>
         {/* Header: Back button + title + optional action buttons */}
         <div style={styles.sidebarHeader}>
           <button onClick={onBack} style={styles.backBtn} title="Înapoi la tablă">
@@ -141,6 +187,16 @@ export default function SubiectePage({ onBack, onOpenTest, onOpenReview }: Props
           {onOpenTest && (
             <button onClick={onOpenTest} style={styles.testBtn} title="Generator test random">
               🎲
+            </button>
+          )}
+          {/* Close button — only rendered inside the mobile drawer */}
+          {isMobile && (
+            <button
+              onClick={() => setSidebarOpen(false)}
+              style={{ ...styles.testBtn, marginLeft: 4 }}
+              title="Închide"
+            >
+              ✕
             </button>
           )}
         </div>
@@ -201,11 +257,30 @@ export default function SubiectePage({ onBack, onOpenTest, onOpenReview }: Props
       </aside>
 
       {/* ── Main viewer ────────────────────────────────────────────────────── */}
-      <main style={styles.main}>
-        {/* Viewer toolbar: title + subiect/barem toggle + download */}
+      <main style={{ ...styles.main, ...(isMobile ? { width: '100%' } : {}) }}>
+        {/* Viewer toolbar: hamburger (mobile) + title + subiect/barem toggle + download */}
         <div style={styles.viewerToolbar}>
-          <div style={styles.viewerTitle}>
-            <strong>EN VIII Matematică</strong> — {selected.label}
+          {/* Hamburger — opens the exam-list sidebar on mobile */}
+          {isMobile && (
+            <button
+              onClick={() => setSidebarOpen(true)}
+              style={{ ...styles.backBtn, padding: '4px 10px', flexShrink: 0 }}
+              title="Selectează subiectul"
+            >
+              ☰
+            </button>
+          )}
+          <div
+            style={{
+              ...styles.viewerTitle,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              minWidth: 0,
+            }}
+          >
+            <strong>EN VIII Matematică</strong>
+            {!isMobile && <> — {selected.label}</>}
           </div>
 
           {/* Toggle between exam paper and answer key */}

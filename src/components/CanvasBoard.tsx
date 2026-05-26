@@ -1341,13 +1341,16 @@ export default function CanvasBoard({
       />
 
       {/* ── Floating toolbar ──────────────────────────────────────────── */}
+      {/* maxWidth + overflowX: hidden scrollbar on narrow screens (toolbar-scroll class) */}
       <div
         data-toolbar
+        className="toolbar-scroll"
         style={{
           position: 'fixed',
           top: 14,
           left: '50%',
           transform: 'translateX(-50%)',
+          maxWidth: 'calc(100vw - 32px)',
           display: 'flex',
           alignItems: 'center',
           gap: 4,
@@ -1356,6 +1359,7 @@ export default function CanvasBoard({
           borderRadius: 28,
           boxShadow: '0 2px 12px rgba(0,0,0,0.12)',
           userSelect: 'none',
+          overflowX: 'auto',
         }}
       >
         {/* Drawing tools */}

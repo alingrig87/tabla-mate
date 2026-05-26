@@ -157,7 +157,8 @@ interface Props {
 export default function FormulaPage({ onBack }: Props): JSX.Element {
   const [activeClass, setActiveClass] = useState<'IX' | 'X' | 'XI' | 'XII'>('IX');
   const [query, setQuery] = useState('');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // On narrow screens start with sidebar hidden so formulas have full width
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 640);
   const contentRef = useRef<HTMLDivElement>(null);
 
   const classData: ClassData = useMemo(

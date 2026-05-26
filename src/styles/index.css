@@ -23,3 +23,15 @@ html,
   overflow: hidden;
   font-family: Inter, system-ui, Arial, sans-serif;
 }
+
+/* ── Toolbar scroll (mobile) ───────────────────────────────────────────────── */
+/* Allows the toolbar to scroll horizontally on narrow screens without          */
+/* showing an ugly scrollbar.                                                   */
+.toolbar-scroll {
+  overflow-x: auto;
+  -ms-overflow-style: none; /* IE / Edge */
+  scrollbar-width: none; /* Firefox */
+}
+.toolbar-scroll::-webkit-scrollbar {
+  display: none; /* Chrome / Safari / Opera */
+}

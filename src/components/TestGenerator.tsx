@@ -300,7 +300,7 @@ const s: Record<string, CSSProperties> = {
   configBody: {
     flex: 1,
     overflowY: 'auto',
-    padding: '24px',
+    padding: 'clamp(14px, 4vw, 24px)',
     display: 'flex',
     flexDirection: 'column',
     gap: 20,
@@ -308,6 +308,7 @@ const s: Record<string, CSSProperties> = {
     maxWidth: 700,
     margin: '0 auto',
     width: '100%',
+    boxSizing: 'border-box',
   },
   card: {
     background: '#16181f',
@@ -347,13 +348,14 @@ const s: Record<string, CSSProperties> = {
   countRow: {
     display: 'flex',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
+    flexWrap: 'wrap',
   },
   countLabel: {
-    width: 190,
+    width: '100%',
     fontSize: 13,
     color: '#a0aec0',
-    flexShrink: 0,
+    fontWeight: 600,
   },
   countBtns: {
     display: 'flex',
