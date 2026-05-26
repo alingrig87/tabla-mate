@@ -1,15 +1,12 @@
 /**
- * ProfilePage — shows the logged-in user's boards + received invites.
+ * ProfilePage — board management + received invites.
  *
- * Features:
- *   - User avatar, name, email
- *   - List of boards: title, date, open / delete
- *   - Inline rename (click title → editable input)
- *   - "Tablă nouă" button — creates a board and navigates straight into it
- *   - "Invitații primite" — invites sent to user's email; accept = open board
+ * Layout: grid of board cards with color-coded headers.
+ * Each card: colored gradient band → title (click to rename) → date + actions.
+ * Bottom section: received invitations with accept / dismiss.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getBoardsByUser, deleteBoard, updateBoardTitle, createBoard } from '../lib/boardSync';
@@ -22,15 +19,109 @@ import type { InviteRecord } from '../lib/invites';
 function formatDate(d: Date): string {
   return d.toLocaleDateString('ro-RO', {
     day: 'numeric',
-    month: 'long',
+    month: 'short',
     year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
   });
 }
 
 function boardAutoTitle(): string {
   return `Tablă · ${new Date().toLocaleDateString('ro-RO', { day: 'numeric', month: 'long' })}`;
+}
+
+// Derive a stable accent color from the board id
+const PALETTE = ['#4f46e5', '#0891b2', '#059669', '#d97706', '#7c3aed', '#e11d48'];
+function boardColor(id: string): string {
+  let h = 0;
+  for (const c of id) h = (h * 31 + c.charCodeAt(0)) & 0xffff;
+  return PALETTE[h % PALETTE.length];
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+interface BoardCardProps {
+  board: BoardMeta;
+  onOpen: () => void;
+  onDelete: () => void;
+  onRename: (title: string) => void;
+  deleting: boolean;
+}
+
+function BoardCard({ board, onOpen, onDelete, onRename, deleting }: BoardCardProps) {
+  const color = boardColor(board.id);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(board.title);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function startEdit(e: React.MouseEvent) {
+    e.stopPropagation();
+    setDraft(board.title);
+    setEditing(true);
+    setTimeout(() => inputRef.current?.select(), 0);
+  }
+
+  function save() {
+    const trimmed = draft.trim();
+    setEditing(false);
+    if (trimmed && trimmed !== board.title) onRename(trimmed);
+  }
+
+  return (
+    <div
+      style={cs.card}
+      onClick={onOpen}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onOpen();
+      }}
+    >
+      {/* ── Colored band ─────────────────────────────────────────────── */}
+      <div style={{ ...cs.band, background: `linear-gradient(135deg, ${color}, ${color}99)` }}>
+        <span style={cs.bandInitial}>
+          {board.title.replace(/[^a-zA-ZÀ-ÿ0-9]/g, '')[0]?.toUpperCase() ?? '📋'}
+        </span>
+      </div>
+
+      {/* ── Body ─────────────────────────────────────────────────────── */}
+      <div style={cs.cardBody}>
+        {editing ? (
+          <input
+            ref={inputRef}
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={save}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') save();
+              if (e.key === 'Escape') setEditing(false);
+            }}
+            onClick={(e) => e.stopPropagation()}
+            style={cs.renameInput}
+          />
+        ) : (
+          <div style={cs.cardTitle}>
+            <span style={cs.cardTitleText} title={board.title}>
+              {board.title}
+            </span>
+            <button style={cs.pencilBtn} onClick={startEdit} title="Redenumește">
+              ✏
+            </button>
+          </div>
+        )}
+        <span style={cs.cardDate}>{formatDate(board.createdAt)}</span>
+      </div>
+
+      {/* ── Actions ──────────────────────────────────────────────────── */}
+      <div style={cs.cardFooter} onClick={(e) => e.stopPropagation()}>
+        <button style={{ ...cs.openBtn, borderColor: `${color}66`, color }} onClick={onOpen}>
+          Deschide →
+        </button>
+        <button style={cs.deleteBtn} onClick={onDelete} disabled={deleting} title="Șterge tabla">
+          {deleting ? '…' : '🗑'}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -46,15 +137,7 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
   const [boards, setBoards] = useState<BoardMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Inline-rename state
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState('');
-
-  // Boards being deleted (show spinner)
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
-
-  // Creating a new board
   const [creating, setCreating] = useState(false);
 
   // Received invites
@@ -62,7 +145,6 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
   const [loadingInvites, setLoadingInvites] = useState(false);
   const [dismissingId, setDismissingId] = useState<string | null>(null);
 
-  // Load boards on mount
   useEffect(() => {
     if (!user) return;
     setLoading(true);
@@ -72,7 +154,6 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
       .finally(() => setLoading(false));
   }, [user]);
 
-  // Load invites on mount
   useEffect(() => {
     if (!user?.email) return;
     setLoadingInvites(true);
@@ -84,19 +165,22 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
 
   // ── Actions ──────────────────────────────────────────────────────────────
 
+  function handleOpen(boardId: string) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('board', boardId);
+    window.history.pushState({}, '', url.toString());
+    onOpenBoard(boardId);
+  }
+
   function handleCreate() {
     if (!user || creating) return;
     setCreating(true);
     const newId = crypto.randomUUID().slice(0, 8);
     const title = boardAutoTitle();
-
-    // 1. Navigate immediately — no waiting for Firestore
     const url = new URL(window.location.href);
     url.searchParams.set('board', newId);
     window.history.pushState({}, '', url.toString());
     onOpenBoard(newId);
-
-    // 2. Persist to Firestore in background
     createBoard(newId, user.uid, title).catch(() => {
       setError('Nu am putut salva tabla. Verifică conexiunea.');
     });
@@ -112,48 +196,27 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
       setError('Nu am putut șterge tabla.');
     } finally {
       setDeletingIds((s) => {
-        const next = new Set(s);
-        next.delete(id);
-        return next;
+        const n = new Set(s);
+        n.delete(id);
+        return n;
       });
     }
   }
 
-  async function handleRename(id: string) {
-    const trimmed = editTitle.trim();
-    if (!trimmed) {
-      setEditingId(null);
-      return;
-    }
-    setEditingId(null);
-    setBoards((prev) => prev.map((b) => (b.id === id ? { ...b, title: trimmed } : b)));
+  async function handleRename(id: string, title: string) {
+    setBoards((prev) => prev.map((b) => (b.id === id ? { ...b, title } : b)));
     try {
-      await updateBoardTitle(id, trimmed);
+      await updateBoardTitle(id, title);
     } catch {
       setError('Nu am putut redenumi tabla.');
     }
   }
 
-  function startEdit(board: BoardMeta) {
-    setEditingId(board.id);
-    setEditTitle(board.title);
-  }
-
-  function handleOpen(boardId: string) {
-    const url = new URL(window.location.href);
-    url.searchParams.set('board', boardId);
-    window.history.pushState({}, '', url.toString());
-    onOpenBoard(boardId);
-  }
-
-  // Accept an invite: navigate to the board, then optionally remove the invite
   function handleAcceptInvite(invite: InviteRecord) {
     handleOpen(invite.boardId);
-    // Non-blocking dismiss after navigating away
     removeInvite(invite.id).catch(console.error);
   }
 
-  // Dismiss (decline) an invite without opening
   async function handleDismissInvite(invite: InviteRecord) {
     setDismissingId(invite.id);
     try {
@@ -187,7 +250,6 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
           ← Tablă
         </button>
 
-        {/* Avatar + info */}
         <div style={s.userRow}>
           {user.photoURL ? (
             <img src={user.photoURL} referrerPolicy="no-referrer" style={s.avatar} alt="avatar" />
@@ -202,25 +264,13 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
           </div>
         </div>
 
-        <button onClick={logout} style={s.logoutBtn} title="Deconectare">
+        <button onClick={logout} style={s.logoutBtn}>
           Logout
         </button>
       </header>
 
       {/* ── Body ──────────────────────────────────────────────────────────── */}
       <div style={s.body}>
-        {/* Section header */}
-        <div style={s.sectionHeader}>
-          <span style={s.sectionTitle}>📋 Tablele mele</span>
-          <button
-            onClick={handleCreate}
-            disabled={creating}
-            style={{ ...s.newBtn, opacity: creating ? 0.6 : 1 }}
-          >
-            {creating ? 'Se creează…' : '+ Tablă nouă'}
-          </button>
-        </div>
-
         {/* Error banner */}
         {error && (
           <div style={s.errorBanner}>
@@ -231,108 +281,77 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
           </div>
         )}
 
-        {/* Board list */}
+        {/* Section header */}
+        <div style={s.sectionHeader}>
+          <span style={s.sectionTitle}>📋 Tablele mele</span>
+          <span style={s.boardCount}>
+            {boards.length} {boards.length === 1 ? 'tablă' : 'table'}
+          </span>
+        </div>
+
+        {/* Board grid */}
         {loading ? (
-          <div style={s.emptyState}>Se încarcă…</div>
-        ) : boards.length === 0 ? (
-          <div style={s.emptyState}>
-            <span style={{ fontSize: 40, display: 'block', marginBottom: 12 }}>🖊</span>
-            Nu ai nicio tablă încă.
-            <br />
-            <span style={{ color: '#4a5568' }}>
-              Click pe &ldquo;+ Tablă nouă&rdquo; sau folosește butonul 🔗 din tablă.
-            </span>
+          <div style={s.loadingRow}>
+            {[1, 2, 3].map((i) => (
+              <div key={i} style={s.skeleton} />
+            ))}
           </div>
         ) : (
-          <div style={s.list}>
+          <div style={s.grid}>
             {boards.map((board) => (
-              <div key={board.id} style={s.card}>
-                {/* Title — inline editable */}
-                <div style={s.cardLeft}>
-                  {editingId === board.id ? (
-                    <input
-                      autoFocus
-                      value={editTitle}
-                      onChange={(e) => setEditTitle(e.target.value)}
-                      onBlur={() => handleRename(board.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleRename(board.id);
-                        if (e.key === 'Escape') setEditingId(null);
-                      }}
-                      style={s.titleInput}
-                    />
-                  ) : (
-                    <button
-                      onClick={() => startEdit(board)}
-                      title="Click pentru redenumire"
-                      style={s.titleBtn}
-                    >
-                      {board.title}
-                    </button>
-                  )}
-                  <span style={s.dateLabel}>{formatDate(board.createdAt)}</span>
-                </div>
-
-                {/* Actions */}
-                <div style={s.cardActions}>
-                  <button
-                    onClick={() => handleOpen(board.id)}
-                    style={s.openBtn}
-                    title="Deschide tabla"
-                  >
-                    Deschide
-                  </button>
-                  <button
-                    onClick={() => handleDelete(board.id)}
-                    disabled={deletingIds.has(board.id)}
-                    style={{ ...s.deleteBtn, opacity: deletingIds.has(board.id) ? 0.4 : 1 }}
-                    title="Șterge tabla"
-                  >
-                    {deletingIds.has(board.id) ? '…' : '🗑'}
-                  </button>
-                </div>
-              </div>
+              <BoardCard
+                key={board.id}
+                board={board}
+                onOpen={() => handleOpen(board.id)}
+                onDelete={() => handleDelete(board.id)}
+                onRename={(title) => handleRename(board.id, title)}
+                deleting={deletingIds.has(board.id)}
+              />
             ))}
+
+            {/* Create new card */}
+            <button
+              style={{ ...cs.card, ...cs.newCard }}
+              onClick={handleCreate}
+              disabled={creating}
+            >
+              <div style={cs.newCardInner}>
+                <span style={cs.newCardPlus}>+</span>
+                <span style={cs.newCardLabel}>{creating ? 'Se creează…' : 'Tablă nouă'}</span>
+              </div>
+            </button>
           </div>
         )}
 
-        {/* ── Received invites section ──────────────────────────────────── */}
+        {/* ── Received invites ────────────────────────────────────────────── */}
         {(loadingInvites || invites.length > 0) && (
           <>
-            <div style={{ ...s.sectionHeader, marginTop: 28 }}>
+            <div style={{ ...s.sectionHeader, marginTop: 32 }}>
               <span style={s.sectionTitle}>📬 Invitații primite</span>
+              {invites.length > 0 && <span style={s.inviteBadge}>{invites.length}</span>}
             </div>
 
             {loadingInvites ? (
-              <div style={{ ...s.emptyState, padding: '20px' }}>Se încarcă…</div>
+              <p style={{ color: '#718096', fontSize: 13 }}>Se încarcă…</p>
             ) : (
-              <div style={s.list}>
+              <div style={s.inviteList}>
                 {invites.map((inv) => (
                   <div key={inv.id} style={s.inviteCard}>
-                    <div style={s.cardLeft}>
+                    <div style={{ ...s.inviteAccent, background: boardColor(inv.boardId) }} />
+                    <div style={s.inviteBody}>
                       <span style={s.inviteTitle}>{inv.boardTitle}</span>
-                      <span style={s.dateLabel}>
-                        De la <strong style={{ color: '#a0aec0' }}>{inv.invitedByName}</strong>
-                        {' · '}
-                        {formatDate(inv.invitedAt)}
+                      <span style={s.inviteMeta}>
+                        De la <strong>{inv.invitedByName}</strong> · {formatDate(inv.invitedAt)}
                       </span>
                     </div>
-                    <div style={s.cardActions}>
-                      <button
-                        onClick={() => handleAcceptInvite(inv)}
-                        style={s.openBtn}
-                        title="Deschide tabla"
-                      >
+                    <div style={s.inviteActions}>
+                      <button style={s.acceptBtn} onClick={() => handleAcceptInvite(inv)}>
                         Acceptă
                       </button>
                       <button
+                        style={s.dismissBtn}
                         onClick={() => handleDismissInvite(inv)}
                         disabled={dismissingId === inv.id}
-                        style={{
-                          ...s.deleteBtn,
-                          opacity: dismissingId === inv.id ? 0.4 : 1,
-                        }}
-                        title="Respinge invitația"
                       >
                         {dismissingId === inv.id ? '…' : '✕'}
                       </button>
@@ -348,7 +367,148 @@ export default function ProfilePage({ onBack, onOpenBoard }: Props): JSX.Element
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Card styles (used by BoardCard sub-component) ────────────────────────────
+
+const cs: Record<string, CSSProperties> = {
+  card: {
+    background: '#1a1c27',
+    border: '1px solid #2d3148',
+    borderRadius: 14,
+    overflow: 'hidden',
+    cursor: 'pointer',
+    display: 'flex',
+    flexDirection: 'column',
+    transition: 'border-color 0.15s, transform 0.12s',
+    userSelect: 'none',
+    textAlign: 'left',
+    padding: 0,
+  },
+  band: {
+    height: 80,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  bandInitial: {
+    fontSize: 28,
+    fontWeight: 800,
+    color: 'rgba(255,255,255,0.9)',
+    fontFamily: 'Inter, system-ui, sans-serif',
+    lineHeight: 1,
+  },
+  cardBody: {
+    padding: '10px 14px 6px',
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+  },
+  cardTitle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    minWidth: 0,
+  },
+  cardTitleText: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: '#e2e8f0',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    flex: 1,
+    minWidth: 0,
+    fontFamily: 'Inter, system-ui, sans-serif',
+  },
+  pencilBtn: {
+    background: 'transparent',
+    border: 'none',
+    color: '#4a5568',
+    cursor: 'pointer',
+    fontSize: 11,
+    padding: '1px 3px',
+    borderRadius: 3,
+    flexShrink: 0,
+    lineHeight: 1,
+  },
+  cardDate: {
+    fontSize: 11,
+    color: '#4a5568',
+    fontFamily: 'Inter, system-ui, sans-serif',
+  },
+  renameInput: {
+    background: '#252840',
+    border: '1px solid #4f46e5',
+    borderRadius: 5,
+    color: '#e2e8f0',
+    fontSize: 13,
+    fontWeight: 700,
+    padding: '3px 7px',
+    width: '100%',
+    boxSizing: 'border-box',
+    fontFamily: 'Inter, system-ui, sans-serif',
+    outline: 'none',
+  },
+  cardFooter: {
+    padding: '8px 14px 12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  openBtn: {
+    flex: 1,
+    background: 'transparent',
+    border: '1px solid',
+    borderRadius: 7,
+    padding: '5px 10px',
+    cursor: 'pointer',
+    fontSize: 12,
+    fontWeight: 600,
+    transition: 'background 0.12s',
+    fontFamily: 'Inter, system-ui, sans-serif',
+  },
+  deleteBtn: {
+    background: 'transparent',
+    border: '1px solid #ef444422',
+    borderRadius: 7,
+    color: '#ef4444',
+    padding: '5px 8px',
+    cursor: 'pointer',
+    fontSize: 13,
+    transition: 'background 0.12s',
+  },
+  newCard: {
+    background: '#16181f',
+    border: '2px dashed #2d3148',
+    borderRadius: 14,
+    cursor: 'pointer',
+    minHeight: 160,
+    transition: 'border-color 0.15s',
+  },
+  newCardInner: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: '100%',
+    padding: 24,
+  },
+  newCardPlus: {
+    fontSize: 32,
+    color: '#4a5568',
+    lineHeight: 1,
+    fontFamily: 'Inter, system-ui, sans-serif',
+  },
+  newCardLabel: {
+    fontSize: 13,
+    color: '#718096',
+    fontFamily: 'Inter, system-ui, sans-serif',
+  },
+};
+
+// ─── Page styles ──────────────────────────────────────────────────────────────
 
 const s: Record<string, CSSProperties> = {
   root: {
@@ -366,17 +526,17 @@ const s: Record<string, CSSProperties> = {
     alignItems: 'center',
     gap: 16,
     padding: '12px 20px',
-    background: '#16181f',
-    borderBottom: '1px solid #2d3148',
+    background: '#0b0d14',
+    borderBottom: '1px solid #1e2030',
     flexShrink: 0,
     flexWrap: 'wrap',
   },
   backBtn: {
-    background: '#2d3148',
+    background: '#1e2030',
     color: '#a0aec0',
     border: 'none',
-    borderRadius: 6,
-    padding: '5px 12px',
+    borderRadius: 8,
+    padding: '6px 14px',
     cursor: 'pointer',
     fontSize: 13,
     fontWeight: 600,
@@ -390,22 +550,22 @@ const s: Record<string, CSSProperties> = {
     minWidth: 0,
   },
   avatar: {
-    width: 40,
-    height: 40,
+    width: 38,
+    height: 38,
     borderRadius: '50%',
     flexShrink: 0,
     border: '2px solid #2d3148',
   },
   avatarFallback: {
-    width: 40,
-    height: 40,
+    width: 38,
+    height: 38,
     borderRadius: '50%',
     background: '#4f46e5',
     color: '#fff',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 700,
     flexShrink: 0,
   },
@@ -423,19 +583,18 @@ const s: Record<string, CSSProperties> = {
     background: 'transparent',
     color: '#ef4444',
     border: '1px solid #ef444433',
-    borderRadius: 6,
-    padding: '5px 12px',
+    borderRadius: 8,
+    padding: '6px 14px',
     cursor: 'pointer',
     fontSize: 12,
     fontWeight: 600,
     flexShrink: 0,
-    transition: 'background 0.15s',
   },
   body: {
     flex: 1,
     overflowY: 'auto',
-    padding: '24px',
-    maxWidth: 720,
+    padding: '24px 24px 40px',
+    maxWidth: 900,
     width: '100%',
     margin: '0 auto',
     boxSizing: 'border-box',
@@ -443,33 +602,43 @@ const s: Record<string, CSSProperties> = {
   sectionHeader: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 10,
     marginBottom: 16,
-    gap: 12,
-    flexWrap: 'wrap',
   },
   sectionTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: 700,
-    color: '#7c85ff',
+    color: '#a0aec0',
   },
-  newBtn: {
-    background: '#4f46e5',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 8,
-    padding: '8px 16px',
-    cursor: 'pointer',
-    fontSize: 13,
-    fontWeight: 600,
-    transition: 'background 0.15s',
+  boardCount: {
+    fontSize: 12,
+    color: '#4a5568',
+    background: '#1e2030',
+    borderRadius: 20,
+    padding: '2px 10px',
+  },
+  grid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+    gap: 14,
+  },
+  loadingRow: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+    gap: 14,
+  },
+  skeleton: {
+    background: '#1a1c27',
+    borderRadius: 14,
+    height: 160,
+    animation: 'pulse 1.5s ease-in-out infinite',
   },
   errorBanner: {
     background: '#2d1a1a',
     color: '#fc8181',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: '10px 14px',
-    marginBottom: 16,
+    marginBottom: 18,
     fontSize: 13,
     display: 'flex',
     alignItems: 'center',
@@ -485,74 +654,60 @@ const s: Record<string, CSSProperties> = {
     fontSize: 14,
     padding: 0,
   },
-  emptyState: {
-    textAlign: 'center',
-    padding: '60px 20px',
-    color: '#718096',
-    fontSize: 14,
-    lineHeight: 2,
+  // Invites
+  inviteBadge: {
+    background: '#4f46e5',
+    color: '#fff',
+    borderRadius: 20,
+    padding: '2px 9px',
+    fontSize: 11,
+    fontWeight: 700,
   },
-  list: {
+  inviteList: {
     display: 'flex',
     flexDirection: 'column',
     gap: 10,
   },
-  card: {
-    background: '#16181f',
+  inviteCard: {
+    background: '#1a1c27',
     border: '1px solid #2d3148',
     borderRadius: 12,
-    padding: '14px 18px',
     display: 'flex',
     alignItems: 'center',
-    gap: 12,
-    flexWrap: 'wrap',
-    transition: 'border-color 0.15s',
+    overflow: 'hidden',
   },
-  cardLeft: {
+  inviteAccent: {
+    width: 4,
+    alignSelf: 'stretch',
+    flexShrink: 0,
+  },
+  inviteBody: {
     flex: 1,
     minWidth: 0,
+    padding: '12px 14px',
     display: 'flex',
     flexDirection: 'column',
     gap: 4,
   },
-  titleBtn: {
-    background: 'transparent',
-    border: 'none',
+  inviteTitle: {
+    fontSize: 13,
+    fontWeight: 700,
     color: '#c7d2fe',
-    fontSize: 14,
-    fontWeight: 600,
-    cursor: 'text',
-    padding: 0,
-    textAlign: 'left',
-    fontFamily: 'Inter, system-ui, sans-serif',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
-    maxWidth: '100%',
   },
-  titleInput: {
-    background: '#252840',
-    border: '1px solid #4f46e5',
-    borderRadius: 6,
-    color: '#e2e8f0',
-    fontSize: 14,
-    fontWeight: 600,
-    padding: '3px 8px',
-    fontFamily: 'Inter, system-ui, sans-serif',
-    outline: 'none',
-    width: '100%',
-    boxSizing: 'border-box',
-  },
-  dateLabel: {
+  inviteMeta: {
     fontSize: 11,
     color: '#4a5568',
   },
-  cardActions: {
+  inviteActions: {
     display: 'flex',
     gap: 8,
+    padding: '0 14px',
     flexShrink: 0,
   },
-  openBtn: {
+  acceptBtn: {
     background: '#3730a3',
     color: '#c7d2fe',
     border: 'none',
@@ -561,37 +716,14 @@ const s: Record<string, CSSProperties> = {
     cursor: 'pointer',
     fontSize: 12,
     fontWeight: 600,
-    transition: 'background 0.15s',
   },
-  deleteBtn: {
-    background: '#1a1a2e',
-    color: '#ef4444',
-    border: '1px solid #ef444422',
+  dismissBtn: {
+    background: 'transparent',
+    border: '1px solid #2d3148',
     borderRadius: 7,
+    color: '#718096',
     padding: '6px 10px',
     cursor: 'pointer',
-    fontSize: 14,
-    transition: 'background 0.15s',
-  },
-  inviteCard: {
-    background: '#16181f',
-    border: '1px solid #3730a344',
-    borderLeft: '3px solid #4f46e5',
-    borderRadius: 12,
-    padding: '14px 18px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 12,
-    flexWrap: 'wrap' as const,
-    transition: 'border-color 0.15s',
-  },
-  inviteTitle: {
-    fontSize: 14,
-    fontWeight: 600,
-    color: '#c7d2fe',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap' as const,
-    maxWidth: '100%',
+    fontSize: 13,
   },
 };

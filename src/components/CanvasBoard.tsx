@@ -9,6 +9,7 @@ import {
   removeItemFromBoard,
   createBoard,
   getBoardMeta,
+  getBoardsByUser,
 } from '../lib/boardSync';
 import SharePanel from './SharePanel';
 
@@ -706,7 +707,7 @@ export default function CanvasBoard({
   onOpenProfile,
 }: CanvasBoardProps): JSX.Element {
   // ── Auth ──────────────────────────────────────────────────────────────────
-  const { user: authUser, loginWithGoogle } = useAuth();
+  const { user: authUser, loading: authLoading, loginWithGoogle } = useAuth();
 
   // ── Collaborative board state ────────────────────────────────────────────
   // boardId is read from ?board=xxx URL param on load; set when creating a board.
@@ -1125,6 +1126,40 @@ export default function CanvasBoard({
     });
     return unsub;
   }, [boardId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Auto-save: join last board when logged in ─────────────────────────────
+  // When a logged-in user opens the app without a ?board= URL param, we silently
+  // load their most recent board (or create one). This means drawing is always
+  // saved automatically for authenticated users — no manual "create board" step.
+  useEffect(() => {
+    if (authLoading) return; // wait for auth to resolve first
+    if (boardId) return; // already have a board (from URL or just created)
+    if (!authUser) return; // anonymous users: opt-in only via the share button
+
+    getBoardsByUser(authUser.uid)
+      .then((boards) => {
+        if (boards.length > 0) {
+          // Load the most recent board
+          const latest = boards[0];
+          const url = new URL(window.location.href);
+          url.searchParams.set('board', latest.id);
+          window.history.replaceState({}, '', url.toString());
+          setBoardTitle(latest.title);
+          setBoardId(latest.id);
+        } else {
+          // First login ever: create a default board silently
+          const newId = crypto.randomUUID().slice(0, 8);
+          const title = `Tablă · ${new Date().toLocaleDateString('ro-RO', { day: 'numeric', month: 'long' })}`;
+          const url = new URL(window.location.href);
+          url.searchParams.set('board', newId);
+          window.history.replaceState({}, '', url.toString());
+          setBoardTitle(title);
+          setBoardId(newId);
+          createBoard(newId, authUser.uid, title).catch(console.error);
+        }
+      })
+      .catch(console.error);
+  }, [authUser?.uid, authLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Fetch board metadata when loading from URL ────────────────────────────
   // When the user opens a shared URL (?board=xxx), fetch the board title so the
@@ -1903,6 +1938,42 @@ export default function CanvasBoard({
           boardTitle={boardTitle}
           onClose={() => setShowSharePanel(false)}
         />
+      )}
+
+      {/* ── Auto-save indicator ──────────────────────────────────────────
+          Shown in the bottom-right corner when the board is synced to Firestore.
+          Reassures logged-in users that their work is being saved.             */}
+      {boardId && authUser && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 14,
+            right: 16,
+            background: '#16181f',
+            border: '1px solid #2d3148',
+            borderRadius: 20,
+            padding: '4px 12px',
+            fontSize: 11,
+            color: '#68d391',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            zIndex: 5,
+            pointerEvents: 'none',
+            userSelect: 'none',
+          }}
+        >
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              background: '#22c55e',
+              flexShrink: 0,
+            }}
+          />
+          Salvat automat
+        </div>
       )}
 
       {/* ── Hidden file input for PDF disk import ───────────────────────── */}
