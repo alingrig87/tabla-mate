@@ -36,6 +36,23 @@ export type GeomKind =
   | 'cylinder'
   | 'sphere';
 
+/**
+ * Decoration toggles for a drawn geometric figure.
+ * Each flag adds a layer of visual annotation on top of the base outline.
+ * All flags are optional / default false — so existing drawings without
+ * a `style` field render exactly as before (no decorations).
+ */
+export interface GeomStyle {
+  /** Draw altitude / height line in red with a right-angle mark */
+  height?: boolean;
+  /** Draw angle arc at the relevant vertex in amber */
+  angle?: boolean;
+  /** Render dimension labels (a, b, h, R, …) next to each element */
+  labels?: boolean;
+  /** Draw diagonal or midline in green dashed */
+  diagonal?: boolean;
+}
+
 export interface GeomItem {
   kind: 'geom'; // discriminator unic în DrawItem
   id: string; // stable UUID — used as Firestore document id in collaborative mode
@@ -46,6 +63,7 @@ export interface GeomItem {
   y1: number;
   x2: number;
   y2: number;
+  style?: GeomStyle; // optional visual decorations
 }
 
 export interface ShapeGroup {
@@ -176,6 +194,113 @@ function face3(ctx: CanvasRenderingContext2D, pts: Pt[], dashed = false) {
   if (dashed) ctx.setLineDash([]);
 }
 
+// ─── Decoration colour tokens ─────────────────────────────────────────────────
+
+const DEC_HEIGHT = '#dc2626'; // red   — altitudini / înălțimi
+const DEC_ANGLE = '#d97706'; // amber — unghiuri
+const DEC_LABEL = '#0f172a'; // dark  — etichete principale
+const DEC_DIAG = '#16a34a'; // green — diagonale / linii mijlocii
+
+// ─── Decoration drawing helpers ───────────────────────────────────────────────
+
+/**
+ * Draw a dashed red line from (x1,y1) to (x2,y2) — represents an altitude.
+ * Also draws the right-angle mark at the foot (x2,y2).
+ * dx/dy: unit direction away from the base along which the mark arms go.
+ */
+function decHeight(
+  ctx: CanvasRenderingContext2D,
+  ax: number,
+  ay: number,
+  footX: number,
+  footY: number,
+  lw: number,
+  sq: number,
+  markDx = 1,
+  markDy = -1
+) {
+  ctx.save();
+  ctx.strokeStyle = DEC_HEIGHT;
+  ctx.lineWidth = Math.max(0.8, lw * 0.65);
+  ctx.lineCap = 'round';
+  ctx.setLineDash([Math.max(4, sq * 0.9), Math.max(3, sq * 0.65)]);
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(footX, footY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  rightAngleMark(ctx, footX, footY, markDx, markDy, Math.max(3, sq * 0.7));
+  ctx.restore();
+}
+
+/**
+ * Draw an angle arc (amber) centred at (vx, vy) from angle a1 to a2 (radians).
+ */
+function decAngle(
+  ctx: CanvasRenderingContext2D,
+  vx: number,
+  vy: number,
+  arcR: number,
+  a1: number,
+  a2: number,
+  ccw = false
+) {
+  ctx.save();
+  ctx.strokeStyle = DEC_ANGLE;
+  ctx.lineWidth = Math.max(0.8, ctx.lineWidth * 0.65);
+  ctx.lineCap = 'round';
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.arc(vx, vy, arcR, a1, a2, ccw);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * Draw a dimension label in italic serif.
+ */
+function decLabel(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  color: string,
+  fs: number
+) {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.font = `italic ${fs}px Georgia, serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.setLineDash([]);
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+/**
+ * Draw a dashed green line — represents a diagonal or midline.
+ */
+function decDiag(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  lw: number
+) {
+  ctx.save();
+  ctx.strokeStyle = DEC_DIAG;
+  ctx.lineWidth = Math.max(0.8, lw * 0.65);
+  ctx.lineCap = 'round';
+  ctx.setLineDash([Math.max(4, lw * 2), Math.max(3, lw * 1.5)]);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
 // ─── Main draw function ────────────────────────────────────────────────────────
 
 export function drawGeom(
@@ -186,7 +311,8 @@ export function drawGeom(
   x1: number,
   y1: number,
   x2: number,
-  y2: number
+  y2: number,
+  style?: GeomStyle
 ) {
   ctx.save();
   ctx.strokeStyle = color;
@@ -204,6 +330,7 @@ export function drawGeom(
     hh = (B - T) / 2;
   const r = Math.min(hw, hh);
   const sq = Math.max(4, lw * 4); // right-angle mark size
+  const fs = Math.max(8, Math.min(hw, hh) * 0.18); // font size proportional to shape
 
   switch (kind) {
     // ── LINII & UNGHIURI ────────────────────────────────────────────────────────
@@ -219,6 +346,11 @@ export function drawGeom(
       ctx.moveTo(R, cy - sq * 1.2);
       ctx.lineTo(R, cy + sq * 1.2);
       ctx.stroke();
+      if (style?.labels) {
+        decLabel(ctx, 'A', L, cy - sq * 2, color, fs);
+        decLabel(ctx, 'B', R, cy - sq * 2, color, fs);
+        decLabel(ctx, 'l', cx, cy - sq * 1.5, DEC_LABEL, fs);
+      }
       break;
 
     case 'ray':
@@ -231,6 +363,10 @@ export function drawGeom(
       ctx.moveTo(L, cy - sq * 1.2);
       ctx.lineTo(L, cy + sq * 1.2);
       ctx.stroke();
+      if (style?.labels) {
+        decLabel(ctx, 'O', L, cy - sq * 2, color, fs);
+        decLabel(ctx, 'A', R, cy - sq * 2, color, fs);
+      }
       break;
 
     case 'angle': {
@@ -248,57 +384,200 @@ export function drawGeom(
       ctx.beginPath();
       ctx.arc(L, B, arm * 0.32, -Math.PI / 4, 0);
       ctx.stroke();
-      // label: nothing (user adds text)
+      if (style?.labels) {
+        decLabel(ctx, 'α', L + arm * 0.38, B - arm * 0.16, DEC_ANGLE, fs);
+      }
       break;
     }
 
     // ── TRIUNGHIURI ─────────────────────────────────────────────────────────────
 
-    case 'tri-right':
+    case 'tri-right': {
       poly(ctx, [
         [L, B],
         [R, B],
         [L, T],
       ]);
       rightAngleMark(ctx, L, B, 1, -1, sq);
-      break;
-
-    case 'tri-equilateral': {
-      const h = r * Math.sqrt(3);
-      poly(ctx, [
-        [cx, cy - (h * 2) / 3],
-        [cx + r, cy + h / 3],
-        [cx - r, cy + h / 3],
-      ]);
+      // Decorations
+      if (style?.height) {
+        // Altitude from right-angle vertex A(L,B) to hypotenuse (L,T)-(R,B)
+        const dx = R - L,
+          dy = B - T;
+        const len2 = dx * dx + dy * dy;
+        const t = ((L - L) * dx + (B - B) * dy) / len2; // t=0 at A projected onto hyp
+        // Foot of altitude from A(L,B) onto BC where B=(R,B), C=(L,T)
+        const bx = R,
+          by = B,
+          cx2 = L,
+          cy2 = T;
+        const ddx = cx2 - bx,
+          ddy = cy2 - by;
+        const ll2 = ddx * ddx + ddy * ddy;
+        const tt = ((L - bx) * ddx + (B - by) * ddy) / ll2;
+        const footX = bx + tt * ddx,
+          footY = by + tt * ddy;
+        const rot = Math.atan2(ddy, ddx);
+        // Draw altitude
+        ctx.save();
+        ctx.strokeStyle = DEC_HEIGHT;
+        ctx.lineWidth = Math.max(0.8, lw * 0.65);
+        ctx.setLineDash([Math.max(4, sq * 0.9), Math.max(3, sq * 0.65)]);
+        ctx.beginPath();
+        ctx.moveTo(L, B);
+        ctx.lineTo(footX, footY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Rotated right-angle mark at foot
+        const sq2 = Math.max(3, sq * 0.7);
+        const nx = Math.cos(rot + Math.PI / 2) * sq2;
+        const ny = Math.sin(rot + Math.PI / 2) * sq2;
+        const ex2 = Math.cos(rot) * sq2;
+        const ey2 = Math.sin(rot) * sq2;
+        ctx.beginPath();
+        ctx.moveTo(footX + nx, footY + ny);
+        ctx.lineTo(footX + nx + ex2, footY + ny + ey2);
+        ctx.lineTo(footX + ex2, footY + ey2);
+        ctx.stroke();
+        ctx.restore();
+        if (style?.labels) {
+          const mx = (L + footX) / 2,
+            my = (B + footY) / 2;
+          decLabel(ctx, 'h', mx - fs * 0.9, my, DEC_HEIGHT, fs);
+        }
+        void t; // suppress unused warning
+      }
+      if (style?.labels) {
+        // c₁ on vertical, c₂ on horizontal, i on hypotenuse
+        decLabel(ctx, 'c₁', L - fs * 1.0, cy, DEC_DIAG, fs);
+        decLabel(ctx, 'c₂', cx, B + fs * 1.2, DEC_DIAG, fs);
+        decLabel(ctx, 'i', cx + fs * 0.9, cy - fs * 0.4, color, fs);
+      }
       break;
     }
 
-    case 'tri-isosceles':
+    case 'tri-equilateral': {
+      const h = r * Math.sqrt(3);
+      const ax = cx,
+        ay = cy - (h * 2) / 3;
+      const bx = cx + r,
+        by = cy + h / 3;
+      const ex = cx - r,
+        ey = cy + h / 3;
       poly(ctx, [
-        [cx, T],
-        [R, B],
-        [L, B],
+        [ax, ay],
+        [bx, by],
+        [ex, ey],
       ]);
+      if (style?.height) {
+        decHeight(ctx, ax, ay, cx, by, lw, sq, 1, -1);
+        if (style?.labels) decLabel(ctx, 'h', cx + fs * 0.9, (ay + by) / 2, DEC_HEIGHT, fs);
+      }
+      if (style?.angle) {
+        decAngle(ctx, bx, by, r * 0.28, Math.PI + 0.35, Math.PI + Math.PI / 3 - 0.1);
+        if (style?.labels) decLabel(ctx, '60°', bx - r * 0.38, by - r * 0.18, DEC_ANGLE, fs * 0.85);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'l', (ax + ex) / 2 - fs * 0.8, (ay + ey) / 2, color, fs);
+        decLabel(ctx, 'l', (ax + bx) / 2 + fs * 0.8, (ay + by) / 2, color, fs);
+        decLabel(ctx, 'l', cx, by + fs * 1.2, color, fs);
+      }
       break;
+    }
 
-    case 'tri-scalene':
+    case 'tri-isosceles': {
+      const ax = cx,
+        ay = T;
+      const bx = R,
+        by = B;
+      const ex = L,
+        ey = B;
       poly(ctx, [
-        [L + hw * 0.35, T],
+        [ax, ay],
+        [bx, by],
+        [ex, ey],
+      ]);
+      if (style?.height) {
+        decHeight(ctx, ax, ay, cx, B, lw, sq, 1, -1);
+        if (style?.labels) decLabel(ctx, 'h', cx + fs * 0.9, cy, DEC_HEIGHT, fs);
+      }
+      if (style?.angle) {
+        // angle at B (bottom-right)
+        const a1 = Math.atan2(ay - by, ax - bx);
+        const a2 = Math.atan2(ey - by, ex - bx);
+        decAngle(ctx, bx, by, r * 0.3, a2, a1);
+        if (style?.labels) decLabel(ctx, 'u', bx - r * 0.38, by - r * 0.16, DEC_ANGLE, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'l', (ax + ex) / 2 - fs * 0.9, (ay + ey) / 2, color, fs);
+        decLabel(ctx, 'l', (ax + bx) / 2 + fs * 0.9, (ay + by) / 2, color, fs);
+        decLabel(ctx, 'b', cx, B + fs * 1.2, color, fs);
+      }
+      break;
+    }
+
+    case 'tri-scalene': {
+      const apexX = L + hw * 0.35;
+      poly(ctx, [
+        [apexX, T],
         [R, B],
         [L, B],
       ]);
+      if (style?.height) {
+        decHeight(ctx, apexX, T, apexX, B, lw, sq, 1, -1);
+        if (style?.labels) decLabel(ctx, 'h', apexX + fs * 0.9, cy, DEC_HEIGHT, fs);
+      }
+      if (style?.angle) {
+        // angle at B (bottom-right)
+        const a1 = Math.atan2(T - B, apexX - R);
+        const a2 = Math.atan2(B - B, L - R);
+        decAngle(ctx, R, B, r * 0.28, a2, a1);
+        if (style?.labels) decLabel(ctx, 'u', R - r * 0.35, B - r * 0.14, DEC_ANGLE, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'a', (L + apexX) / 2 - fs * 0.9, (B + T) / 2, color, fs);
+        decLabel(ctx, 'c', (R + apexX) / 2 + fs * 0.9, (B + T) / 2, color, fs);
+        decLabel(ctx, 'b', cx, B + fs * 1.2, color, fs);
+      }
       break;
+    }
 
     // ── PATRULATER ──────────────────────────────────────────────────────────────
 
-    case 'rhombus':
+    case 'rhombus': {
       poly(ctx, [
         [cx, T],
         [R, cy],
         [cx, B],
         [L, cy],
       ]);
+      if (style?.diagonal) {
+        decDiag(ctx, cx, T, cx, B, lw);
+        decDiag(ctx, L, cy, R, cy, lw);
+        // right-angle at centre
+        ctx.save();
+        ctx.strokeStyle = DEC_HEIGHT;
+        ctx.lineWidth = Math.max(0.8, lw * 0.65);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - sq * 0.6);
+        ctx.lineTo(cx + sq * 0.6, cy - sq * 0.6);
+        ctx.lineTo(cx + sq * 0.6, cy);
+        ctx.stroke();
+        ctx.restore();
+      }
+      if (style?.angle) {
+        decAngle(ctx, R, cy, r * 0.28, Math.PI * 0.6, Math.PI * 1.4);
+        if (style?.labels) decLabel(ctx, 'u', R - r * 0.36, cy, DEC_ANGLE, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'l', (cx + L) / 2 - fs * 0.6, (cy + T) / 2, color, fs);
+        if (style?.diagonal) {
+          decLabel(ctx, 'd₁', cx + fs * 1.0, (T + cy) / 2, DEC_DIAG, fs);
+          decLabel(ctx, 'd₂', (cx + R) / 2, cy - fs * 1.0, DEC_DIAG, fs);
+        }
+      }
       break;
+    }
 
     case 'parallelogram': {
       const sk = hw * 0.3;
@@ -308,17 +587,48 @@ export function drawGeom(
         [R - sk, B],
         [L, B],
       ]);
+      if (style?.height) {
+        // Height from top-left vertex (L+sk, T) down to base
+        decHeight(ctx, L + sk, T, L + sk, B, lw, sq, 1, -1);
+        if (style?.labels) decLabel(ctx, 'h', L + sk + fs * 0.9, cy, DEC_HEIGHT, fs);
+      }
+      if (style?.angle) {
+        const a1 = Math.atan2(T - B, sk);
+        decAngle(ctx, L, B, r * 0.3, 0, a1, true);
+        if (style?.labels) decLabel(ctx, 'u', L + r * 0.32, B - r * 0.13, DEC_ANGLE, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'b', cx, B + fs * 1.2, color, fs);
+        decLabel(ctx, 'a', L + fs * 0.2, cy, color, fs);
+      }
       break;
     }
 
     case 'trapezoid': {
       const ins = hw * 0.22;
+      const topL = L + ins,
+        topR = R - ins * 1.5;
       poly(ctx, [
-        [L + ins, T],
-        [R - ins * 1.5, T],
+        [topL, T],
+        [topR, T],
         [R, B],
         [L, B],
       ]);
+      if (style?.height) {
+        decHeight(ctx, topL, T, topL, B, lw, sq, 1, -1);
+        if (style?.labels) decLabel(ctx, 'h', topL + fs * 0.9, cy, DEC_HEIGHT, fs);
+      }
+      if (style?.diagonal) {
+        // Midline
+        const mlL = (L + topL) / 2,
+          mlR = (R + topR) / 2;
+        decDiag(ctx, mlL, cy, mlR, cy, lw);
+        if (style?.labels) decLabel(ctx, 'lₘ', (mlL + mlR) / 2, cy - fs * 1.1, DEC_DIAG, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'B', cx, B + fs * 1.2, color, fs);
+        decLabel(ctx, 'b', (topL + topR) / 2, T - fs * 1.1, color, fs);
+      }
       break;
     }
 
@@ -330,6 +640,16 @@ export function drawGeom(
         [R, B],
         [L, B],
       ]);
+      rightAngleMark(ctx, L, T, 1, 1, sq);
+      rightAngleMark(ctx, L, B, 1, -1, sq);
+      if (style?.height) {
+        decHeight(ctx, L, T, L, B, lw, sq, 1, -1);
+        if (style?.labels) decLabel(ctx, 'h', L + fs * 1.0, cy, DEC_HEIGHT, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'B', cx, B + fs * 1.2, color, fs);
+        decLabel(ctx, 'b', (L + R - ins) / 2, T - fs * 1.1, color, fs);
+      }
       break;
     }
 
@@ -341,6 +661,21 @@ export function drawGeom(
         [R, B],
         [L, B],
       ]);
+      if (style?.height) {
+        // Height from midpoint of top base to bottom
+        decHeight(ctx, cx, T, cx, B, lw, sq, 1, -1);
+        if (style?.labels) decLabel(ctx, 'h', cx + fs * 0.9, cy, DEC_HEIGHT, fs);
+      }
+      if (style?.diagonal) {
+        const mlL = (L + L + ins) / 2,
+          mlR = (R + R - ins) / 2;
+        decDiag(ctx, mlL, cy, mlR, cy, lw);
+        if (style?.labels) decLabel(ctx, 'lₘ', cx, cy - fs * 1.1, DEC_DIAG, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'B', cx, B + fs * 1.2, color, fs);
+        decLabel(ctx, 'b', cx, T - fs * 1.1, color, fs);
+      }
       break;
     }
 
@@ -348,15 +683,19 @@ export function drawGeom(
 
     case 'pentagon':
       poly(ctx, regularPts(5, cx, cy, r, -Math.PI / 2));
+      if (style?.labels) decLabel(ctx, 'l', cx + r + fs, cy, color, fs);
       break;
     case 'hexagon':
       poly(ctx, regularPts(6, cx, cy, r, 0));
+      if (style?.labels) decLabel(ctx, 'l', cx + r + fs, cy, color, fs);
       break;
     case 'heptagon':
       poly(ctx, regularPts(7, cx, cy, r, -Math.PI / 2));
+      if (style?.labels) decLabel(ctx, 'l', cx + r + fs, cy, color, fs);
       break;
     case 'octagon':
       poly(ctx, regularPts(8, cx, cy, r, Math.PI / 8));
+      if (style?.labels) decLabel(ctx, 'l', cx + r + fs, cy, color, fs);
       break;
 
     // ── CERCURI ─────────────────────────────────────────────────────────────────
@@ -365,6 +704,18 @@ export function drawGeom(
       ctx.beginPath();
       ctx.arc(cx, cy, r, Math.PI * 0.75, Math.PI * 2.25);
       ctx.stroke();
+      if (style?.labels) {
+        // Radius line
+        ctx.save();
+        ctx.strokeStyle = DEC_HEIGHT;
+        ctx.lineWidth = Math.max(0.8, lw * 0.65);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + r, cy);
+        ctx.stroke();
+        ctx.restore();
+        decLabel(ctx, 'R', cx + r / 2, cy - fs * 1.0, DEC_HEIGHT, fs);
+      }
       break;
 
     case 'sector':
@@ -373,6 +724,13 @@ export function drawGeom(
       ctx.arc(cx, cy, r, -Math.PI / 2, Math.PI / 4);
       ctx.closePath();
       ctx.stroke();
+      if (style?.angle) {
+        decAngle(ctx, cx, cy, r * 0.32, -Math.PI / 2, Math.PI / 4);
+        if (style?.labels) decLabel(ctx, 'α', cx + r * 0.18, cy - r * 0.14, DEC_ANGLE, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'R', cx + r * 0.54, cy - r * 0.54, DEC_HEIGHT, fs);
+      }
       break;
 
     case 'annulus':
@@ -382,6 +740,10 @@ export function drawGeom(
       ctx.beginPath();
       ctx.arc(cx, cy, r * 0.52, 0, Math.PI * 2);
       ctx.stroke();
+      if (style?.labels) {
+        decLabel(ctx, 'R', cx + (r + r * 0.52) / 2, cy - fs * 0.8, DEC_HEIGHT, fs);
+        decLabel(ctx, 'r', cx + r * 0.26, cy - fs * 0.8, DEC_LABEL, fs);
+      }
       break;
 
     // ── GEOMETRIE ÎN SPAȚIU ─────────────────────────────────────────────────────
@@ -411,6 +773,22 @@ export function drawGeom(
       ctx.lineTo(tl2[0], tl2[1]);
       ctx.stroke();
       ctx.setLineDash([]);
+      if (style?.labels) {
+        decLabel(ctx, 'l', (fl[0] + fr[0]) / 2, fl[1] + fs * 1.2, color, fs);
+        decLabel(ctx, 'l', fl[0] - fs * 1.0, (fl[1] + tl[1]) / 2, color, fs);
+        decLabel(ctx, 'l', (fr[0] + fr2[0]) / 2 + fs * 0.9, (fr[1] + fr2[1]) / 2, color, fs);
+      }
+      if (style?.height) {
+        // Vertical edge as height indicator
+        ctx.save();
+        ctx.strokeStyle = DEC_HEIGHT;
+        ctx.lineWidth = Math.max(0.8, lw * 0.65);
+        ctx.beginPath();
+        ctx.moveTo(fr2[0], fr2[1]);
+        ctx.lineTo(fl2[0], fl2[1]);
+        ctx.stroke();
+        ctx.restore();
+      }
       break;
     }
 
@@ -436,17 +814,24 @@ export function drawGeom(
       ctx.lineTo(tl2[0], tl2[1]);
       ctx.stroke();
       ctx.setLineDash([]);
+      if (style?.labels) {
+        decLabel(ctx, 'a', (fl[0] + fr[0]) / 2, fl[1] + fs * 1.2, color, fs);
+        decLabel(ctx, 'b', fl[0] - fs * 1.0, (fl[1] + tl[1]) / 2, color, fs);
+        decLabel(ctx, 'h', (fr[0] + tr[0]) / 2 + fs * 1.0, (fr[1] + tr[1]) / 2, DEC_HEIGHT, fs);
+      }
+      if (style?.height) {
+        // Height edge
+        decDiag(ctx, tr[0], tr[1], fr[0], fr[1], lw);
+      }
       break;
     }
 
     case 'prism-tri': {
       const s = r * 0.78;
       const d = s * 1.4;
-      // triangle front
       const A: Pt = ob(cx, cy, 0, -s, 0);
       const BL: Pt = ob(cx, cy, -s, s, 0);
       const BR: Pt = ob(cx, cy, s, s, 0);
-      // triangle back
       const A2: Pt = ob(cx, cy, 0, -s, d);
       const BL2: Pt = ob(cx, cy, -s, s, d);
       const BR2: Pt = ob(cx, cy, s, s, d);
@@ -462,6 +847,14 @@ export function drawGeom(
       ctx.lineTo(BL2[0], BL2[1]);
       ctx.stroke();
       ctx.setLineDash([]);
+      if (style?.height) {
+        // Height of lateral face
+        decDiag(ctx, A[0], A[1], (BL[0] + BR[0]) / 2, (BL[1] + BR[1]) / 2, lw);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'h', (BR[0] + BR2[0]) / 2 + fs, (BR[1] + BR2[1]) / 2, DEC_HEIGHT, fs);
+        decLabel(ctx, 'Ab', A[0] - fs * 1.5, A[1], color, fs);
+      }
       break;
     }
 
@@ -513,6 +906,17 @@ export function drawGeom(
       ctx.stroke();
       ctx.setLineDash([]);
       face3(ctx, [bl2, br2, apex], true);
+      if (style?.height) {
+        // Axis from apex to base centre
+        const baseCx = (bl[0] + br[0] + br2[0] + bl2[0]) / 4;
+        const baseCy = (bl[1] + br[1] + br2[1] + bl2[1]) / 4;
+        decDiag(ctx, apex[0], apex[1], baseCx, baseCy, lw);
+        if (style?.labels)
+          decLabel(ctx, 'h', apex[0] + fs * 1.2, (apex[1] + baseCy) / 2, DEC_HEIGHT, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'a', (bl[0] + br[0]) / 2, bl[1] + fs * 1.2, color, fs);
+      }
       break;
     }
 
@@ -520,19 +924,22 @@ export function drawGeom(
       const s = r * 0.85;
       const h = s * Math.sqrt(2 / 3);
       const A: Pt = [cx, cy - h * 1.2];
-      const B: Pt = [cx + s * 0.9, cy + h * 0.7];
+      const Bpt: Pt = [cx + s * 0.9, cy + h * 0.7];
       const C: Pt = [cx - s * 0.9, cy + h * 0.7];
       const D: Pt = [cx + s * 0.3, cy + h * 0.05];
-      face3(ctx, [A, B, C]); // front
-      face3(ctx, [A, B, D]); // right
+      face3(ctx, [A, Bpt, C]); // front
+      face3(ctx, [A, Bpt, D]); // right
       ctx.setLineDash([4, 4]);
       face3(ctx, [A, C, D]);
       ctx.beginPath();
-      ctx.moveTo(B[0], B[1]);
+      ctx.moveTo(Bpt[0], Bpt[1]);
       ctx.lineTo(D[0], D[1]);
       ctx.stroke();
       ctx.setLineDash([]);
-      face3(ctx, [B, C, D], true);
+      face3(ctx, [Bpt, C, D], true);
+      if (style?.labels) {
+        decLabel(ctx, 'a', (A[0] + Bpt[0]) / 2 + fs, (A[1] + Bpt[1]) / 2, color, fs);
+      }
       break;
     }
 
@@ -544,7 +951,6 @@ export function drawGeom(
       ctx.beginPath();
       ctx.ellipse(cx, cy + h * 0.15, s, s * 0.32, 0, 0, Math.PI * 2);
       ctx.stroke();
-      // visible base arc already drawn; now slant lines
       ctx.beginPath();
       ctx.moveTo(apex[0], apex[1]);
       ctx.lineTo(cx - s, cy + h * 0.15);
@@ -553,23 +959,28 @@ export function drawGeom(
       ctx.moveTo(apex[0], apex[1]);
       ctx.lineTo(cx + s, cy + h * 0.15);
       ctx.stroke();
-      // hide back half of base
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.ellipse(cx, cy + h * 0.15, s, s * 0.32, 0, Math.PI, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
+      if (style?.height) {
+        decDiag(ctx, cx, cy - h, cx, cy + h * 0.15, lw);
+        if (style?.labels) decLabel(ctx, 'h', cx + fs * 1.0, cy - h * 0.4, DEC_HEIGHT, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'R', cx + s / 2, cy + h * 0.15 + fs * 1.2, DEC_HEIGHT, fs);
+        decLabel(ctx, 'G', (cx + cx + s) / 2 + fs * 1.0, (cy - h + cy + h * 0.15) / 2, color, fs);
+      }
       break;
     }
 
     case 'cylinder': {
       const s = r * 0.78;
       const h = r * 1.0;
-      // top ellipse
       ctx.beginPath();
       ctx.ellipse(cx, cy - h, s, s * 0.32, 0, 0, Math.PI * 2);
       ctx.stroke();
-      // bottom ellipse (front half solid, back dashed)
       ctx.beginPath();
       ctx.ellipse(cx, cy + h, s, s * 0.32, 0, 0, Math.PI);
       ctx.stroke();
@@ -578,7 +989,6 @@ export function drawGeom(
       ctx.ellipse(cx, cy + h, s, s * 0.32, 0, Math.PI, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
-      // vertical lines
       ctx.beginPath();
       ctx.moveTo(cx - s, cy - h);
       ctx.lineTo(cx - s, cy + h);
@@ -587,15 +997,29 @@ export function drawGeom(
       ctx.moveTo(cx + s, cy - h);
       ctx.lineTo(cx + s, cy + h);
       ctx.stroke();
+      if (style?.height) {
+        decDiag(ctx, cx, cy - h, cx, cy + h, lw);
+        if (style?.labels) decLabel(ctx, 'h', cx + fs * 1.0, cy, DEC_HEIGHT, fs);
+      }
+      if (style?.labels) {
+        // Radius line on top
+        ctx.save();
+        ctx.strokeStyle = DEC_HEIGHT;
+        ctx.lineWidth = Math.max(0.8, lw * 0.65);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - h);
+        ctx.lineTo(cx + s, cy - h);
+        ctx.stroke();
+        ctx.restore();
+        decLabel(ctx, 'R', cx + s / 2, cy - h - fs * 1.1, DEC_HEIGHT, fs);
+      }
       break;
     }
 
     case 'sphere': {
-      // outer circle
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.stroke();
-      // equator (ellipse)
       ctx.beginPath();
       ctx.ellipse(cx, cy, r, r * 0.32, 0, 0, Math.PI);
       ctx.stroke();
@@ -603,11 +1027,29 @@ export function drawGeom(
       ctx.beginPath();
       ctx.ellipse(cx, cy, r, r * 0.32, 0, Math.PI, Math.PI * 2);
       ctx.stroke();
-      // meridian
       ctx.beginPath();
       ctx.ellipse(cx, cy, r * 0.32, r, 0, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
+      if (style?.labels) {
+        // Radius from centre to right
+        ctx.save();
+        ctx.strokeStyle = DEC_HEIGHT;
+        ctx.lineWidth = Math.max(0.8, lw * 0.65);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + r, cy);
+        ctx.stroke();
+        ctx.restore();
+        ctx.save();
+        ctx.fillStyle = DEC_HEIGHT;
+        ctx.beginPath();
+        ctx.arc(cx, cy, Math.max(2, lw * 1.5), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        decLabel(ctx, 'R', cx + r / 2, cy - fs * 1.0, DEC_HEIGHT, fs);
+        decLabel(ctx, 'O', cx - fs * 0.7, cy - fs * 0.7, DEC_LABEL, fs * 0.85);
+      }
       break;
     }
   }
@@ -625,11 +1067,12 @@ export function drawGeomPreview(
   x1: number,
   y1: number,
   x2: number,
-  y2: number
+  y2: number,
+  style?: GeomStyle
 ) {
   ctx.save();
   ctx.globalAlpha = 0.65;
   ctx.setLineDash([6, 4]);
-  drawGeom(ctx, geomKind, color, width, x1, y1, x2, y2);
+  drawGeom(ctx, geomKind, color, width, x1, y1, x2, y2, style);
   ctx.restore();
 }

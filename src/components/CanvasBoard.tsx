@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { GeomKind, GeomItem, SHAPE_GROUPS, drawGeom, drawGeomPreview } from '../shapes';
+import { GeomKind, GeomItem, GeomStyle, SHAPE_GROUPS, drawGeom, drawGeomPreview } from '../shapes';
 import { SUBIECTE } from '../data/subiecte';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -165,7 +165,17 @@ function drawItem(ctx: CanvasRenderingContext2D, item: DrawItem) {
       ctx.fillText(item.content, item.x, item.y);
       break;
     case 'geom':
-      drawGeom(ctx, item.geomKind, item.color, item.width, item.x1, item.y1, item.x2, item.y2);
+      drawGeom(
+        ctx,
+        item.geomKind,
+        item.color,
+        item.width,
+        item.x1,
+        item.y1,
+        item.x2,
+        item.y2,
+        item.style
+      );
       break;
     case 'image': {
       // preloadImg returns the cached HTMLImageElement, or starts an async load.
@@ -230,6 +240,7 @@ function redrawAll(
     y2: number;
     color: string;
     width: number;
+    style?: GeomStyle;
   },
   selectionBox?: { x: number; y: number; w: number; h: number }
 ) {
@@ -259,7 +270,8 @@ function redrawAll(
       geomPreview.x1,
       geomPreview.y1,
       geomPreview.x2,
-      geomPreview.y2
+      geomPreview.y2,
+      geomPreview.style
     );
   // Selection highlight — dashed blue rect with corner handles, screen-size-stable
   if (selectionBox) {
@@ -912,6 +924,18 @@ export default function CanvasBoard({
   }, [activeGeom]);
   const [showShapes, setShowShapes] = useState(false);
 
+  // GeomStyle decoration toggles — controls height, angle arc, labels, diagonal
+  const [geomStyle, setGeomStyle] = useState<GeomStyle>({
+    height: true,
+    angle: true,
+    labels: true,
+    diagonal: true,
+  });
+  const geomStyleRef = useRef<GeomStyle>(geomStyle);
+  useEffect(() => {
+    geomStyleRef.current = geomStyle;
+  }, [geomStyle]);
+
   // Panel visibility
   const [showColorPanel, setShowColorPanel] = useState(false);
 
@@ -975,6 +999,7 @@ export default function CanvasBoard({
       y2: number;
       color: string;
       width: number;
+      style?: GeomStyle;
     }
   ) {
     const displayItems = overrideItems ?? itemsRef.current;
@@ -1662,6 +1687,7 @@ export default function CanvasBoard({
         y2: pos.y,
         color: colorRef.current,
         width: penSizeRef.current,
+        style: geomStyleRef.current,
       });
     }
   }
@@ -1772,6 +1798,7 @@ export default function CanvasBoard({
           y1,
           x2: pos.x,
           y2: pos.y,
+          style: { ...geomStyleRef.current },
         },
       ]);
     }
@@ -2332,6 +2359,68 @@ export default function CanvasBoard({
             minWidth: 280,
           }}
         >
+          {/* Decoration toggles */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, color: '#888', marginBottom: 6, fontFamily: 'sans-serif' }}>
+              Decorații
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {(
+                [
+                  {
+                    key: 'height' as keyof GeomStyle,
+                    label: 'h',
+                    title: 'Înălțime (roșu)',
+                    color: '#dc2626',
+                  },
+                  {
+                    key: 'angle' as keyof GeomStyle,
+                    label: '∠',
+                    title: 'Arc unghi (chihlimbar)',
+                    color: '#d97706',
+                  },
+                  {
+                    key: 'labels' as keyof GeomStyle,
+                    label: 'abc',
+                    title: 'Etichete (litere)',
+                    color: '#0f172a',
+                  },
+                  {
+                    key: 'diagonal' as keyof GeomStyle,
+                    label: 'd',
+                    title: 'Diagonală (verde)',
+                    color: '#16a34a',
+                  },
+                ] as { key: keyof GeomStyle; label: string; title: string; color: string }[]
+              ).map(({ key, label, title, color: c }) => {
+                const on = geomStyle[key] !== false;
+                return (
+                  <button
+                    key={key}
+                    title={title}
+                    onClick={() => setGeomStyle((s) => ({ ...s, [key]: !s[key] }))}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: 20,
+                      border: on ? `2px solid ${c}` : '1.5px solid #ddd',
+                      background: on ? `${c}18` : '#f8f8f8',
+                      color: on ? c : '#aaa',
+                      cursor: 'pointer',
+                      fontSize: 13,
+                      fontFamily: 'sans-serif',
+                      fontWeight: 700,
+                      lineHeight: 1.4,
+                      transition: 'all 0.12s',
+                      userSelect: 'none',
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {SHAPE_GROUPS.map((group) => (
             <div key={group.label} style={{ marginBottom: 12 }}>
               <div
