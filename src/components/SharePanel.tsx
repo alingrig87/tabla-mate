@@ -3,22 +3,16 @@
  *
  * Features:
  *   - Shows the shareable board URL with one-click copy
- *   - Email invite field with Google Contacts autocomplete (if logged in)
- *   - Lists people already invited to this board
- *   - Revoke invite with one click
+ *   - Manual email invite field (Firestore-backed)
+ *   - Lists people already invited to this board with revoke button
  *
- * When the user is not logged in, the contacts autocomplete is hidden and a
- * gentle nudge to log in is shown (manual email entry still works).
- *
- * If the Google People API is not enabled in Cloud Console, contacts fall
- * back silently and only manual email input is available.
+ * Google Contacts autocomplete is intentionally omitted: that scope requires
+ * Google app verification. Manual email invite works without any extra OAuth scope.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import type { CSSProperties, KeyboardEvent } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import type { CSSProperties } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getOrFetchContacts } from '../lib/contacts';
-import type { GoogleContact } from '../lib/contacts';
 import { inviteToBoard, getInvitesForBoard, removeInvite } from '../lib/invites';
 import type { InviteRecord } from '../lib/invites';
 
@@ -45,7 +39,7 @@ function isValidEmail(s: string): boolean {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function SharePanel({ boardId, boardTitle, onClose }: Props): JSX.Element {
-  const { user, googleAccessToken, loginWithGoogle } = useAuth();
+  const { user, loginWithGoogle } = useAuth();
 
   // URL copy
   const [copyLabel, setCopyLabel] = useState('Copiază');
@@ -54,34 +48,12 @@ export default function SharePanel({ boardId, boardTitle, onClose }: Props): JSX
   const [emailInput, setEmailInput] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [sendOk, setSendOk] = useState<string | null>(null); // success message
-
-  // Google Contacts autocomplete
-  const [contacts, setContacts] = useState<GoogleContact[]>([]);
-  const [suggestions, setSuggestions] = useState<GoogleContact[]>([]);
-  const [contactsError, setContactsError] = useState<string | null>(null);
-  const [activeSugg, setActiveSugg] = useState(-1);
-  const suggRef = useRef<HTMLUListElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [sendOk, setSendOk] = useState<string | null>(null);
 
   // Existing invites for this board
   const [invites, setInvites] = useState<InviteRecord[]>([]);
   const [loadingInvites, setLoadingInvites] = useState(true);
   const [revokingId, setRevokingId] = useState<string | null>(null);
-
-  // ── Load contacts once (cached per access token) ─────────────────────────
-  useEffect(() => {
-    if (!googleAccessToken) return;
-    getOrFetchContacts(googleAccessToken)
-      .then(setContacts)
-      .catch((err: Error) => {
-        // Surface a friendly message only for the "API not enabled" case
-        if (err.message.includes('People API')) {
-          setContactsError('Autocomplete dezactivat (People API neactivat).');
-        }
-        // Other errors (token expired, network) — silently degrade
-      });
-  }, [googleAccessToken]);
 
   // ── Load existing invites for this board ─────────────────────────────────
   const refreshInvites = useCallback(() => {
@@ -96,47 +68,6 @@ export default function SharePanel({ boardId, boardTitle, onClose }: Props): JSX
     refreshInvites();
   }, [refreshInvites]);
 
-  // ── Autocomplete filtering ────────────────────────────────────────────────
-  function handleEmailChange(value: string) {
-    setEmailInput(value);
-    setSendError(null);
-    setSendOk(null);
-    setActiveSugg(-1);
-
-    const q = value.trim().toLowerCase();
-    if (q.length < 1 || contacts.length === 0) {
-      setSuggestions([]);
-      return;
-    }
-    const hits = contacts
-      .filter((c) => c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q))
-      .slice(0, 6);
-    setSuggestions(hits);
-  }
-
-  function pickSuggestion(c: GoogleContact) {
-    setEmailInput(c.email);
-    setSuggestions([]);
-    setActiveSugg(-1);
-    inputRef.current?.focus();
-  }
-
-  function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (suggestions.length === 0) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setActiveSugg((n) => Math.min(n + 1, suggestions.length - 1));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setActiveSugg((n) => Math.max(n - 1, 0));
-    } else if (e.key === 'Enter' && activeSugg >= 0) {
-      e.preventDefault();
-      pickSuggestion(suggestions[activeSugg]);
-    } else if (e.key === 'Escape') {
-      setSuggestions([]);
-    }
-  }
-
   // ── Send invite ───────────────────────────────────────────────────────────
   async function handleInvite() {
     const email = emailInput.trim();
@@ -148,7 +79,6 @@ export default function SharePanel({ boardId, boardTitle, onClose }: Props): JSX
       setSendError('Trebuie să fii autentificat pentru a invita.');
       return;
     }
-    // Check duplicate
     if (invites.some((inv) => inv.inviteeEmail === email.toLowerCase())) {
       setSendError('Persoana a fost deja invitată.');
       return;
@@ -168,7 +98,6 @@ export default function SharePanel({ boardId, boardTitle, onClose }: Props): JSX
       );
       setSendOk(`Invitație trimisă către ${email}`);
       setEmailInput('');
-      setSuggestions([]);
       refreshInvites();
     } catch {
       setSendError('Nu am putut trimite invitația. Încearcă din nou.');
@@ -184,7 +113,7 @@ export default function SharePanel({ boardId, boardTitle, onClose }: Props): JSX
       await removeInvite(invite.id);
       setInvites((prev) => prev.filter((i) => i.id !== invite.id));
     } catch {
-      // Silently fail — refresh will show real state
+      /* silently fail — refresh shows real state */
     } finally {
       setRevokingId(null);
     }
@@ -198,17 +127,9 @@ export default function SharePanel({ boardId, boardTitle, onClose }: Props): JSX
     });
   }
 
-  // ── Close on outside click ────────────────────────────────────────────────
-  // (handled by CanvasBoard's existing data-panel logic, so no extra handler needed)
-
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div
-      data-panel
-      style={s.panel}
-      // Prevent canvas pointer events from firing through the panel
-      onPointerDown={(e) => e.stopPropagation()}
-    >
+    <div data-panel style={s.panel} onPointerDown={(e) => e.stopPropagation()}>
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div style={s.header}>
         <span style={s.liveDot} />
@@ -241,84 +162,45 @@ export default function SharePanel({ boardId, boardTitle, onClose }: Props): JSX
       <div style={s.section}>
         <div style={s.sectionLabel}>✉ Invită pe cineva</div>
 
-        {/* Contacts autocomplete wrapper */}
-        <div style={{ position: 'relative' }}>
-          <div style={s.row}>
-            <input
-              ref={inputRef}
-              type="email"
-              placeholder={
-                googleAccessToken ? 'Caută în contacte sau scrie email…' : 'Adresă email…'
-              }
-              value={emailInput}
-              onChange={(e) => handleEmailChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onBlur={() => {
-                // Delay so click on suggestion fires first
-                setTimeout(() => setSuggestions([]), 150);
-              }}
-              style={s.emailInput}
-              disabled={sending}
-            />
-            <button
-              onClick={handleInvite}
-              disabled={sending || !emailInput.trim()}
-              style={{
-                ...s.inviteBtn,
-                opacity: sending || !emailInput.trim() ? 0.5 : 1,
-              }}
-            >
-              {sending ? '…' : 'Invită'}
-            </button>
-          </div>
-
-          {/* Suggestions dropdown */}
-          {suggestions.length > 0 && (
-            <ul ref={suggRef} style={s.dropdown}>
-              {suggestions.map((c, i) => (
-                <li
-                  key={c.email}
-                  style={{
-                    ...s.suggItem,
-                    background: i === activeSugg ? '#2d3148' : 'transparent',
-                  }}
-                  onMouseDown={() => pickSuggestion(c)}
-                >
-                  {c.photoUrl ? (
-                    <img src={c.photoUrl} style={s.suggPhoto} referrerPolicy="no-referrer" alt="" />
-                  ) : (
-                    <div style={s.suggInitial}>{(c.name || c.email)[0].toUpperCase()}</div>
-                  )}
-                  <div style={s.suggInfo}>
-                    <span style={s.suggName}>{c.name}</span>
-                    <span style={s.suggEmail}>{c.email}</span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
+        <div style={s.row}>
+          <input
+            type="email"
+            placeholder="Adresă email…"
+            value={emailInput}
+            onChange={(e) => {
+              setEmailInput(e.target.value);
+              setSendError(null);
+              setSendOk(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleInvite();
+            }}
+            style={s.emailInput}
+            disabled={sending}
+          />
+          <button
+            onClick={handleInvite}
+            disabled={sending || !emailInput.trim()}
+            style={{
+              ...s.inviteBtn,
+              opacity: sending || !emailInput.trim() ? 0.5 : 1,
+            }}
+          >
+            {sending ? '…' : 'Invită'}
+          </button>
         </div>
 
         {/* Feedback messages */}
         {sendError && <p style={s.errorMsg}>⚠ {sendError}</p>}
         {sendOk && <p style={s.okMsg}>✓ {sendOk}</p>}
-        {contactsError && <p style={s.warnMsg}>ℹ {contactsError}</p>}
 
-        {/* Nudge to login for contacts autocomplete */}
+        {/* Nudge to login */}
         {!user && (
           <p style={s.hint}>
             <button onClick={loginWithGoogle} style={s.inlineLoginBtn}>
               Conectează-te cu Google
             </button>{' '}
-            pentru a invita din contactele tale.
-          </p>
-        )}
-        {user && !googleAccessToken && (
-          <p style={s.hint}>
-            <button onClick={loginWithGoogle} style={s.inlineLoginBtn}>
-              Reconectează-te
-            </button>{' '}
-            pentru autocomplete din contacte.
+            pentru a putea invita pe cineva.
           </p>
         )}
       </div>
@@ -487,73 +369,6 @@ const s: Record<string, CSSProperties> = {
     flexShrink: 0,
     transition: 'background 0.15s',
   },
-  dropdown: {
-    position: 'absolute',
-    top: '100%',
-    left: 0,
-    right: 0,
-    background: '#1e2030',
-    border: '1px solid #2d3148',
-    borderRadius: 10,
-    marginTop: 4,
-    padding: '4px 0',
-    listStyle: 'none',
-    zIndex: 30,
-    boxShadow: '0 6px 20px rgba(0,0,0,0.4)',
-    maxHeight: 220,
-    overflowY: 'auto',
-  },
-  suggItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    padding: '7px 12px',
-    cursor: 'pointer',
-    transition: 'background 0.1s',
-    borderRadius: 6,
-    margin: '0 4px',
-  },
-  suggPhoto: {
-    width: 28,
-    height: 28,
-    borderRadius: '50%',
-    flexShrink: 0,
-    border: '1px solid #2d3148',
-  },
-  suggInitial: {
-    width: 28,
-    height: 28,
-    borderRadius: '50%',
-    background: '#4f46e5',
-    color: '#fff',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: 12,
-    fontWeight: 700,
-    flexShrink: 0,
-  },
-  suggInfo: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 1,
-    minWidth: 0,
-  },
-  suggName: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: '#e2e8f0',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  suggEmail: {
-    fontSize: 11,
-    color: '#718096',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
   errorMsg: {
     margin: '6px 0 0',
     fontSize: 12,
@@ -563,11 +378,6 @@ const s: Record<string, CSSProperties> = {
     margin: '6px 0 0',
     fontSize: 12,
     color: '#68d391',
-  },
-  warnMsg: {
-    margin: '6px 0 0',
-    fontSize: 11,
-    color: '#f6ad55',
   },
   inlineLoginBtn: {
     background: 'transparent',
