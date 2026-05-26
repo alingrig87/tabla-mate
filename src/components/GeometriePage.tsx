@@ -1,7 +1,6 @@
 /**
- * GeometriePage — vizualizare figuri geometrice cu notații standard și formule.
- * Două secțiuni: Figuri plane (arii & perimetre) și Corpuri geometrice (arii & volume).
- * SVG-urile sunt desenate manual cu culori distincte pentru fiecare element.
+ * GeometriePage — figuri geometrice cu notații standard și formule.
+ * Secțiuni: Figuri plane (arii & perimetre) și Corpuri geometrice (arii & volume).
  */
 
 import React, { useState } from 'react';
@@ -9,17 +8,83 @@ import React, { useState } from 'react';
 // ─── Colour tokens ────────────────────────────────────────────────────────────
 const C = {
   shape: '#1e40af', // deep-blue  — shape outline
-  height: '#dc2626', // red        — heights / altitudes
+  height: '#dc2626', // red        — heights / altitudes / axes
   diag: '#16a34a', // green      — diagonals / midlines
   angle: '#d97706', // amber      — angle arcs + labels
-  hidden: '#94a3b8', // slate-gray — dashed hidden / construction lines
-  dot: '#dc2626', // red dot    — centres, vertices
-  text: '#0f172a', // near-black — dimension labels
+  hidden: '#94a3b8', // slate-gray — dashed hidden edges
+  dot: '#dc2626', // red dot    — centres
+  text: '#0f172a', // near-black — vertex / dimension labels
 };
 
-// ─── Tiny SVG helpers ─────────────────────────────────────────────────────────
+// ─── SVG helpers ──────────────────────────────────────────────────────────────
 
-/** Small square in the corner of two perpendicular lines = right-angle mark */
+type Anchor = 'start' | 'middle' | 'end';
+
+/** Dimension label — italic serif (for a, b, h, R, …) */
+function Lbl({
+  x,
+  y,
+  text,
+  color = C.text,
+  size = 13,
+  anchor = 'middle' as Anchor,
+}: {
+  x: number;
+  y: number;
+  text: string;
+  color?: string;
+  size?: number;
+  anchor?: Anchor;
+}) {
+  return (
+    <text
+      x={x}
+      y={y}
+      fill={color}
+      fontSize={size}
+      fontFamily="Georgia, serif"
+      fontStyle="italic"
+      textAnchor={anchor}
+      dominantBaseline="central"
+    >
+      {text}
+    </text>
+  );
+}
+
+/** Vertex label — bold sans-serif (for A, B, V, O, …) */
+function VLbl({
+  x,
+  y,
+  text,
+  anchor = 'middle' as Anchor,
+  color = C.text,
+  size = 10,
+}: {
+  x: number;
+  y: number;
+  text: string;
+  anchor?: Anchor;
+  color?: string;
+  size?: number;
+}) {
+  return (
+    <text
+      x={x}
+      y={y}
+      fill={color}
+      fontSize={size}
+      fontFamily="sans-serif"
+      fontWeight="700"
+      textAnchor={anchor}
+      dominantBaseline="central"
+    >
+      {text}
+    </text>
+  );
+}
+
+/** Small square at a right-angle corner */
 function RightAngleMark({
   cx,
   cy,
@@ -35,7 +100,10 @@ function RightAngleMark({
   const r = (rotate * Math.PI) / 180;
   const cos = Math.cos(r),
     sin = Math.sin(r);
-  const rot = (dx: number, dy: number) => [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos];
+  const rot = (dx: number, dy: number): [number, number] => [
+    cx + dx * cos - dy * sin,
+    cy + dx * sin + dy * cos,
+  ];
   const [ax, ay] = rot(0, 0);
   const [bx, by] = rot(s, 0);
   const [ex, ey] = rot(s, -s);
@@ -47,38 +115,6 @@ function RightAngleMark({
       stroke={C.height}
       strokeWidth="1.4"
     />
-  );
-}
-
-/** Dimension label in italic serif */
-function Lbl({
-  x,
-  y,
-  text,
-  color = C.text,
-  size = 13,
-  anchor = 'middle',
-}: {
-  x: number;
-  y: number;
-  text: string;
-  color?: string;
-  size?: number;
-  anchor?: string;
-}) {
-  return (
-    <text
-      x={x}
-      y={y}
-      fill={color}
-      fontSize={size}
-      fontFamily="Georgia, serif"
-      fontStyle="italic"
-      textAnchor={anchor}
-      dominantBaseline="central"
-    >
-      {text}
-    </text>
   );
 }
 
@@ -116,7 +152,6 @@ function AngleArc({
 
 const SVGTriunghi = () => (
   <svg viewBox="0 0 160 130" width="160" height="130">
-    {/* Triangle: A(14,115) B(146,115) C(95,18) */}
     <polygon
       points="14,115 146,115 95,18"
       fill="none"
@@ -124,7 +159,6 @@ const SVGTriunghi = () => (
       strokeWidth="2.5"
       strokeLinejoin="round"
     />
-    {/* Height from C(95,18) to base AB, foot H(95,115) */}
     <line
       x1="95"
       y1="18"
@@ -135,64 +169,56 @@ const SVGTriunghi = () => (
       strokeDasharray="5,3"
     />
     <RightAngleMark cx={95} cy={115} size={7} rotate={0} />
-    {/* Labels */}
     <Lbl x={46} y={72} text="a" color={C.shape} />
     <Lbl x={124} y={72} text="c" color={C.shape} />
     <Lbl x={80} y={127} text="b" color={C.shape} />
     <Lbl x={104} y={72} text="h" color={C.height} size={12} />
-    {/* Angle u at vertex B */}
     <AngleArc cx={146} cy={115} r={20} startDeg={155} endDeg={180} />
     <Lbl x={121} y={112} text="u" color={C.angle} size={11} />
   </svg>
 );
 
 const SVGTriunghiDreptunghic = () => {
-  // A(18,112) = right angle, B(142,112) = right along base, C(18,20) = top
-  const A = [18, 112],
-    B = [142, 112],
-    C = [18, 20];
-  // Foot of altitude from A onto hypotenuse BC:
-  const [bx, by] = B,
-    [cx, cy] = C;
+  // renamed to avoid conflict with C color tokens
+  const ptA: [number, number] = [18, 112];
+  const ptB: [number, number] = [142, 112];
+  const apex: [number, number] = [18, 20];
+  const [bx, by] = ptB,
+    [cx, cy] = apex;
   const dx = cx - bx,
     dy = cy - by;
   const len2 = dx * dx + dy * dy;
-  const t = ((A[0] - bx) * dx + (A[1] - by) * dy) / len2;
+  const t = ((ptA[0] - bx) * dx + (ptA[1] - by) * dy) / len2;
   const Hx = bx + t * dx,
-    Hy = by + t * dy; // foot ≈ (59, 50)
+    Hy = by + t * dy;
   return (
     <svg viewBox="0 0 160 130" width="160" height="130">
-      {/* Triangle */}
       <polygon
-        points={`${A[0]},${A[1]} ${B[0]},${B[1]} ${C[0]},${C[1]}`}
+        points={`${ptA[0]},${ptA[1]} ${ptB[0]},${ptB[1]} ${apex[0]},${apex[1]}`}
         fill="none"
         stroke={C.shape}
         strokeWidth="2.5"
         strokeLinejoin="round"
       />
-      {/* Right angle at A */}
       <path
-        d={`M${A[0]},${A[1] - 8} L${A[0] + 8},${A[1] - 8} L${A[0] + 8},${A[1]}`}
+        d={`M${ptA[0]},${ptA[1] - 8} L${ptA[0] + 8},${ptA[1] - 8} L${ptA[0] + 8},${ptA[1]}`}
         fill="none"
         stroke={C.height}
         strokeWidth="1.4"
       />
-      {/* Altitude from A to hypotenuse */}
       <line
-        x1={A[0]}
-        y1={A[1]}
+        x1={ptA[0]}
+        y1={ptA[1]}
         x2={Hx}
         y2={Hy}
         stroke={C.height}
         strokeWidth="1.5"
         strokeDasharray="5,3"
       />
-      {/* Labels */}
       <Lbl x={80} y={121} text="c₂" color={C.diag} size={12} />
       <Lbl x={8} y={68} text="c₁" color={C.diag} size={12} anchor="middle" />
       <Lbl x={96} y={60} text="i" color={C.shape} />
       <Lbl x={26} y={82} text="h" color={C.height} size={12} />
-      {/* Right angle mark at foot H */}
       <RightAngleMark cx={Hx} cy={Hy} size={7} rotate={-34} />
     </svg>
   );
@@ -200,7 +226,6 @@ const SVGTriunghiDreptunghic = () => {
 
 const SVGTriunghiEchilateral = () => (
   <svg viewBox="0 0 160 130" width="160" height="130">
-    {/* A(80,12) B(142,118) C(18,118) */}
     <polygon
       points="80,12 142,118 18,118"
       fill="none"
@@ -208,7 +233,6 @@ const SVGTriunghiEchilateral = () => (
       strokeWidth="2.5"
       strokeLinejoin="round"
     />
-    {/* Height */}
     <line
       x1="80"
       y1="12"
@@ -229,7 +253,6 @@ const SVGTriunghiEchilateral = () => (
 const SVGPatrat = () => (
   <svg viewBox="0 0 160 130" width="160" height="130">
     <rect x="28" y="18" width="104" height="104" fill="none" stroke={C.shape} strokeWidth="2.5" />
-    {/* Diagonal (optional, dashed) */}
     <line
       x1="28"
       y1="18"
@@ -248,7 +271,6 @@ const SVGPatrat = () => (
 const SVGDreptunghi = () => (
   <svg viewBox="0 0 160 130" width="160" height="130">
     <rect x="14" y="30" width="132" height="76" fill="none" stroke={C.shape} strokeWidth="2.5" />
-    {/* Diagonal */}
     <line
       x1="14"
       y1="30"
@@ -266,7 +288,6 @@ const SVGDreptunghi = () => (
 
 const SVGParalelogram = () => (
   <svg viewBox="0 0 160 130" width="160" height="130">
-    {/* Parallelogram: A(20,112) B(126,112) C(140,22) D(34,22) */}
     <polygon
       points="20,112 126,112 140,22 34,22"
       fill="none"
@@ -274,7 +295,6 @@ const SVGParalelogram = () => (
       strokeWidth="2.5"
       strokeLinejoin="round"
     />
-    {/* Height from D(34,22) to AB: foot H(34,112) */}
     <line
       x1="34"
       y1="22"
@@ -285,11 +305,9 @@ const SVGParalelogram = () => (
       strokeDasharray="5,3"
     />
     <RightAngleMark cx={34} cy={112} size={7} rotate={0} />
-    {/* Labels */}
     <Lbl x={73} y={121} text="b" color={C.shape} />
     <Lbl x={9} y={68} text="a" color={C.shape} anchor="middle" />
     <Lbl x={43} y={68} text="h" color={C.height} size={12} />
-    {/* Angle u */}
     <AngleArc cx={20} cy={112} r={22} startDeg={-60} endDeg={0} />
     <Lbl x={40} y={104} text="u" color={C.angle} size={11} />
   </svg>
@@ -297,7 +315,6 @@ const SVGParalelogram = () => (
 
 const SVGRomb = () => (
   <svg viewBox="0 0 160 130" width="160" height="130">
-    {/* Diamond: A(80,10) B(150,65) C(80,120) D(10,65) */}
     <polygon
       points="80,10 150,65 80,120 10,65"
       fill="none"
@@ -305,7 +322,6 @@ const SVGRomb = () => (
       strokeWidth="2.5"
       strokeLinejoin="round"
     />
-    {/* Diagonals */}
     <line
       x1="80"
       y1="10"
@@ -324,13 +340,10 @@ const SVGRomb = () => (
       strokeWidth="1.5"
       strokeDasharray="5,3"
     />
-    {/* Right angle at centre */}
     <path d="M80,65 L80,58 L87,58 L87,65" fill="none" stroke={C.height} strokeWidth="1.4" />
-    {/* Labels */}
     <Lbl x={38} y={38} text="l" color={C.shape} />
     <Lbl x={89} y={92} text="d₁" color={C.diag} size={12} />
     <Lbl x={112} y={58} text="d₂" color={C.diag} size={12} />
-    {/* Angle */}
     <AngleArc cx={150} cy={65} r={18} startDeg={145} endDeg={175} />
     <Lbl x={127} y={63} text="u" color={C.angle} size={11} />
   </svg>
@@ -338,7 +351,6 @@ const SVGRomb = () => (
 
 const SVGTrapez = () => (
   <svg viewBox="0 0 160 130" width="160" height="130">
-    {/* Trapezoid: A(16,112) B(144,112) C(112,26) D(44,26) */}
     <polygon
       points="16,112 144,112 112,26 44,26"
       fill="none"
@@ -346,7 +358,6 @@ const SVGTrapez = () => (
       strokeWidth="2.5"
       strokeLinejoin="round"
     />
-    {/* Height */}
     <line
       x1="44"
       y1="26"
@@ -357,7 +368,6 @@ const SVGTrapez = () => (
       strokeDasharray="5,3"
     />
     <RightAngleMark cx={44} cy={112} size={7} rotate={0} />
-    {/* Midline */}
     <line
       x1="30"
       y1="69"
@@ -367,7 +377,6 @@ const SVGTrapez = () => (
       strokeWidth="1.5"
       strokeDasharray="6,3"
     />
-    {/* Labels */}
     <Lbl x={80} y={120} text="B" color={C.shape} />
     <Lbl x={78} y={19} text="b" color={C.shape} />
     <Lbl x={52} y={68} text="h" color={C.height} size={12} />
@@ -378,20 +387,15 @@ const SVGTrapez = () => (
 const SVGCerc = () => (
   <svg viewBox="0 0 160 130" width="160" height="130">
     <circle cx="80" cy="65" r="54" fill="none" stroke={C.shape} strokeWidth="2.5" />
-    {/* Radius */}
     <line x1="80" y1="65" x2="134" y2="65" stroke={C.height} strokeWidth="1.8" />
-    {/* Centre dot */}
     <circle cx="80" cy="65" r="3" fill={C.dot} />
     <Lbl x={80} y={58} text="O" color={C.text} size={12} />
     <Lbl x={108} y={57} text="R" color={C.height} />
-    {/* Circumference arrow hint */}
-    <path d="M80,11 A54,54 0 0,1 126,97" fill="none" stroke={C.shape} strokeWidth="0" />
   </svg>
 );
 
 const SVGSectorCircular = () => (
   <svg viewBox="0 0 160 130" width="160" height="130">
-    {/* Sector: centre O(80,85), radius 70, from 200° to 340° */}
     <path
       d="M80,85 L14,61 A70,70 0 0,1 146,61 Z"
       fill="none"
@@ -399,434 +403,580 @@ const SVGSectorCircular = () => (
       strokeWidth="2.5"
       strokeLinejoin="round"
     />
-    {/* Arc label l */}
-    <path d="M14,61 A70,70 0 0,1 146,61" fill="none" stroke={C.shape} strokeWidth="0" />
-    {/* Radii */}
     <line x1="80" y1="85" x2="14" y2="61" stroke={C.height} strokeWidth="1.6" />
     <line x1="80" y1="85" x2="146" y2="61" stroke={C.height} strokeWidth="1.6" />
     <circle cx="80" cy="85" r="3" fill={C.dot} />
-    {/* Angle arc */}
     <AngleArc cx={80} cy={85} r={24} startDeg={-152} endDeg={-28} />
     <Lbl x={80} y={58} text="α" color={C.angle} size={13} />
     <Lbl x={38} y={80} text="R" color={C.height} size={12} />
-    {/* Arc label */}
     <Lbl x={80} y={18} text="l" color={C.shape} />
   </svg>
 );
 
-// ─── 3D Solid SVGs ────────────────────────────────────────────────────────────
+// ─── 3D Solid SVGs  (matching standard Romanian textbook style) ───────────────
+// Convention: ABCD = bottom base, A'B'C'D' = top base; V = apex; O = centre
+// Colors: blue = visible edges, gray-dashed = hidden, red = height/axis/radius
 
-const SVGCub = () => (
-  <svg viewBox="0 0 160 140" width="160" height="140">
-    {/* Front face: A(20,110) B(100,110) C(100,40) D(20,40) */}
-    <rect x="20" y="40" width="80" height="70" fill="none" stroke={C.shape} strokeWidth="2.2" />
-    {/* Top parallelogram: D(20,40) D'(50,16) C'(130,16) C(100,40) */}
-    <polygon
-      points="20,40 50,16 130,16 100,40"
-      fill="none"
-      stroke={C.shape}
-      strokeWidth="2.2"
-      strokeLinejoin="round"
-    />
-    {/* Right face: B(100,110) B'(130,86) C'(130,16) C(100,40) */}
-    <polygon
-      points="100,110 130,86 130,16 100,40"
-      fill="none"
-      stroke={C.shape}
-      strokeWidth="2.2"
-      strokeLinejoin="round"
-    />
-    {/* Hidden edges dashed */}
-    <line
-      x1="20"
-      y1="110"
-      x2="50"
-      y2="86"
-      stroke={C.hidden}
-      strokeWidth="1.4"
-      strokeDasharray="5,3"
-    />
-    <line
-      x1="50"
-      y1="86"
-      x2="130"
-      y2="86"
-      stroke={C.hidden}
-      strokeWidth="1.4"
-      strokeDasharray="5,3"
-    />
-    <line
-      x1="50"
-      y1="86"
-      x2="50"
-      y2="16"
-      stroke={C.hidden}
-      strokeWidth="1.4"
-      strokeDasharray="5,3"
-    />
-    {/* Labels */}
-    <Lbl x={60} y={118} text="l" color={C.shape} size={13} />
-    <Lbl x={8} y={75} text="l" color={C.shape} size={13} anchor="middle" />
-    <Lbl x={115} y={62} text="l" color={C.shape} size={13} />
-    {/* Diagonal */}
-    <line
-      x1="20"
-      y1="110"
-      x2="130"
-      y2="16"
-      stroke={C.diag}
-      strokeWidth="1.2"
-      strokeDasharray="4,3"
-    />
-    <Lbl x={80} y={68} text="d" color={C.diag} size={11} />
-  </svg>
-);
+const SVGCub = () => {
+  // Cabinet oblique projection: front face + depth goes upper-right
+  // Side = 78, oblique offset dx=28, dy=-20
+  // Bottom face: A(front-left) B(front-right) C(back-right,hidden) D(back-left,hidden)
+  // Top face:    A'            B'             C'                    D'
+  const vA = { x: 18, y: 118 };
+  const vB = { x: 96, y: 118 };
+  const vAp = { x: 18, y: 40 };
+  const vBp = { x: 96, y: 40 };
+  const vC = { x: 124, y: 98 }; // hidden
+  const vCp = { x: 124, y: 20 };
+  const vD = { x: 46, y: 98 }; // hidden
+  const vDp = { x: 46, y: 20 };
+  const SW = 2.2,
+    SD = '5,3';
+  const blue = { stroke: C.shape, strokeWidth: SW, fill: 'none' };
+  const gray = { stroke: C.hidden, strokeWidth: 1.3, fill: 'none', strokeDasharray: SD };
+  const red = { stroke: C.height, strokeWidth: 1.4, fill: 'none', strokeDasharray: SD };
 
-const SVGParalelipiped = () => (
-  <svg viewBox="0 0 160 140" width="160" height="140">
-    {/* Front face */}
-    <rect x="16" y="50" width="90" height="75" fill="none" stroke={C.shape} strokeWidth="2.2" />
-    {/* Top face */}
-    <polygon
-      points="16,50 44,22 134,22 106,50"
-      fill="none"
-      stroke={C.shape}
-      strokeWidth="2.2"
-      strokeLinejoin="round"
-    />
-    {/* Right face */}
-    <polygon
-      points="106,125 134,97 134,22 106,50"
-      fill="none"
-      stroke={C.shape}
-      strokeWidth="2.2"
-      strokeLinejoin="round"
-    />
-    {/* Hidden */}
-    <line
-      x1="16"
-      y1="125"
-      x2="44"
-      y2="97"
-      stroke={C.hidden}
-      strokeWidth="1.3"
-      strokeDasharray="5,3"
-    />
-    <line
-      x1="44"
-      y1="97"
-      x2="134"
-      y2="97"
-      stroke={C.hidden}
-      strokeWidth="1.3"
-      strokeDasharray="5,3"
-    />
-    <line
-      x1="44"
-      y1="97"
-      x2="44"
-      y2="22"
-      stroke={C.hidden}
-      strokeWidth="1.3"
-      strokeDasharray="5,3"
-    />
-    {/* Labels */}
-    <Lbl x={61} y={133} text="a" color={C.shape} size={12} />
-    <Lbl x={6} y={88} text="b" color={C.shape} size={12} anchor="middle" />
-    <Lbl x={120} y={72} text="h" color={C.height} size={12} />
-    {/* Height line */}
-    <line
-      x1="134"
-      y1="22"
-      x2="134"
-      y2="97"
-      stroke={C.height}
-      strokeWidth="1.5"
-      strokeDasharray="4,3"
-    />
-  </svg>
-);
+  const pt = (v: { x: number; y: number }) => `${v.x},${v.y}`;
 
-const SVGPrisma = () => (
-  <svg viewBox="0 0 160 140" width="160" height="140">
-    {/* Front triangle: A(20,115) B(100,115) C(60,40) */}
-    <polygon
-      points="20,115 100,115 60,40"
-      fill="none"
-      stroke={C.shape}
-      strokeWidth="2.2"
-      strokeLinejoin="round"
-    />
-    {/* Back triangle (shifted +40,–30): A'(60,85) B'(140,85) C'(100,10) */}
-    <polygon
-      points="60,85 140,85 100,10"
-      fill="none"
-      stroke={C.hidden}
-      strokeWidth="1.4"
-      strokeDasharray="5,3"
-      strokeLinejoin="round"
-    />
-    {/* Lateral edges */}
-    <line
-      x1="20"
-      y1="115"
-      x2="60"
-      y2="85"
-      stroke={C.hidden}
-      strokeWidth="1.4"
-      strokeDasharray="5,3"
-    />
-    <line x1="100" y1="115" x2="140" y2="85" stroke={C.shape} strokeWidth="2.2" />
-    <line x1="60" y1="40" x2="100" y2="10" stroke={C.shape} strokeWidth="2.2" />
-    {/* Height line */}
-    <line
-      x1="60"
-      y1="115"
-      x2="60"
-      y2="40"
-      stroke={C.height}
-      strokeWidth="1.5"
-      strokeDasharray="4,3"
-    />
-    <RightAngleMark cx={60} cy={115} size={6} rotate={0} />
-    {/* Labels */}
-    <Lbl x={60} y={128} text="Ab" color={C.shape} size={11} />
-    <Lbl x={68} y={78} text="h" color={C.height} size={12} />
-  </svg>
-);
+  return (
+    <svg viewBox="0 0 155 135" width="155" height="135">
+      {/* Hidden bottom edges */}
+      <line x1={vA.x} y1={vA.y} x2={vD.x} y2={vD.y} {...gray} />
+      <line x1={vD.x} y1={vD.y} x2={vC.x} y2={vC.y} {...gray} />
+      <line x1={vD.x} y1={vD.y} x2={vDp.x} y2={vDp.y} {...gray} />
 
-const SVGPiramida = () => (
-  <svg viewBox="0 0 160 140" width="160" height="140">
-    {/* Base square: A(18,115) B(118,115) C(138,90) D(38,90) */}
-    <polygon
-      points="18,115 118,115 138,90 38,90"
-      fill="none"
-      stroke={C.shape}
-      strokeWidth="2.2"
-      strokeLinejoin="round"
-    />
-    {/* Hidden base diagonal */}
-    <line
-      x1="18"
-      y1="115"
-      x2="138"
-      y2="90"
-      stroke={C.hidden}
-      strokeWidth="1.3"
-      strokeDasharray="5,3"
-    />
-    <line
-      x1="118"
-      y1="115"
-      x2="38"
-      y2="90"
-      stroke={C.hidden}
-      strokeWidth="1.3"
-      strokeDasharray="5,3"
-    />
-    {/* Apex V(78,16) */}
-    <line x1="78" y1="16" x2="18" y2="115" stroke={C.shape} strokeWidth="2.2" />
-    <line x1="78" y1="16" x2="118" y2="115" stroke={C.shape} strokeWidth="2.2" />
-    <line x1="78" y1="16" x2="138" y2="90" stroke={C.shape} strokeWidth="2.2" />
-    <line
-      x1="78"
-      y1="16"
-      x2="38"
-      y2="90"
-      stroke={C.hidden}
-      strokeWidth="1.4"
-      strokeDasharray="5,3"
-    />
-    {/* Height from V to centre of base */}
-    <line
-      x1="78"
-      y1="16"
-      x2="78"
-      y2="103"
-      stroke={C.height}
-      strokeWidth="1.5"
-      strokeDasharray="4,3"
-    />
-    <circle cx="78" cy="103" r="3" fill={C.dot} />
-    {/* Apothem */}
-    <line
-      x1="78"
-      y1="103"
-      x2="118"
-      y2="115"
-      stroke={C.diag}
-      strokeWidth="1.3"
-      strokeDasharray="4,3"
-    />
-    {/* Labels */}
-    <Lbl x={78} y={8} text="V" color={C.shape} size={12} />
-    <Lbl x={88} y={60} text="h" color={C.height} size={12} />
-    <Lbl x={100} y={118} text="a" color={C.shape} size={12} />
-    <Lbl x={100} y={106} text="ap" color={C.diag} size={10} />
-  </svg>
-);
+      {/* Space diagonals (red, behind faces — draw before solid edges) */}
+      <line x1={vA.x} y1={vA.y} x2={vCp.x} y2={vCp.y} {...red} />
+      <line x1={vB.x} y1={vB.y} x2={vDp.x} y2={vDp.y} {...red} />
 
-const SVGSfera = () => (
-  <svg viewBox="0 0 160 140" width="160" height="140">
-    {/* Main circle */}
-    <circle cx="80" cy="70" r="58" fill="none" stroke={C.shape} strokeWidth="2.4" />
-    {/* Equator ellipse */}
-    <ellipse
-      cx="80"
-      cy="70"
-      rx="58"
-      ry="18"
-      fill="none"
-      stroke={C.shape}
-      strokeWidth="1.8"
-      strokeDasharray="6,4"
-    />
-    {/* Radius */}
-    <line x1="80" y1="70" x2="138" y2="70" stroke={C.height} strokeWidth="1.8" />
-    <circle cx="80" cy="70" r="3" fill={C.dot} />
-    {/* Labels */}
-    <Lbl x={74} y={63} text="O" color={C.text} size={12} />
-    <Lbl x={112} y={63} text="R" color={C.height} />
-  </svg>
-);
+      {/* Front face A-B-B'-A' */}
+      <polygon
+        points={`${pt(vA)} ${pt(vB)} ${pt(vBp)} ${pt(vAp)}`}
+        fill="none"
+        stroke={C.shape}
+        strokeWidth={SW}
+        strokeLinejoin="round"
+      />
 
-const SVGCilindru = () => (
-  <svg viewBox="0 0 160 140" width="160" height="140">
-    {/* Body */}
-    <rect x="30" y="32" width="100" height="90" fill="none" stroke={C.shape} strokeWidth="2.3" />
-    {/* Top ellipse */}
-    <ellipse cx="80" cy="32" rx="50" ry="16" fill="none" stroke={C.shape} strokeWidth="2.3" />
-    {/* Bottom ellipse */}
-    <ellipse cx="80" cy="122" rx="50" ry="16" fill="none" stroke={C.shape} strokeWidth="2.3" />
-    {/* Hidden bottom half */}
-    <ellipse
-      cx="80"
-      cy="122"
-      rx="50"
-      ry="16"
-      fill="none"
-      stroke={C.hidden}
-      strokeWidth="1.3"
-      strokeDasharray="5,3"
-    />
-    {/* Height */}
-    <line
-      x1="130"
-      y1="32"
-      x2="130"
-      y2="122"
-      stroke={C.height}
-      strokeWidth="1.6"
-      strokeDasharray="4,3"
-    />
-    {/* Radius on top */}
-    <line x1="80" y1="32" x2="130" y2="32" stroke={C.diag} strokeWidth="1.6" />
-    <circle cx="80" cy="32" r="3" fill={C.dot} />
-    <circle cx="80" cy="122" r="3" fill={C.dot} />
-    {/* Labels */}
-    <Lbl x={107} y={28} text="R" color={C.diag} size={12} />
-    <Lbl x={140} y={77} text="h" color={C.height} size={12} />
-  </svg>
-);
+      {/* Right face: B-C-C'-B' */}
+      <line x1={vB.x} y1={vB.y} x2={vC.x} y2={vC.y} {...blue} />
+      <line x1={vC.x} y1={vC.y} x2={vCp.x} y2={vCp.y} {...blue} />
+      <line x1={vCp.x} y1={vCp.y} x2={vBp.x} y2={vBp.y} {...blue} />
 
-const SVGCon = () => (
-  <svg viewBox="0 0 160 140" width="160" height="140">
-    {/* Apex V(80,14) */}
-    {/* Base ellipse centre (80,114) */}
-    <ellipse cx="80" cy="114" rx="56" ry="16" fill="none" stroke={C.shape} strokeWidth="2.3" />
-    {/* Hidden half */}
-    <ellipse
-      cx="80"
-      cy="114"
-      rx="56"
-      ry="16"
-      fill="none"
-      stroke={C.hidden}
-      strokeWidth="1.3"
-      strokeDasharray="5,3"
-    />
-    {/* Lateral lines */}
-    <line x1="80" y1="14" x2="24" y2="114" stroke={C.shape} strokeWidth="2.3" />
-    <line x1="80" y1="14" x2="136" y2="114" stroke={C.shape} strokeWidth="2.3" />
-    {/* Axis */}
-    <line
-      x1="80"
-      y1="14"
-      x2="80"
-      y2="114"
-      stroke={C.height}
-      strokeWidth="1.5"
-      strokeDasharray="4,3"
-    />
-    <circle cx="80" cy="114" r="3" fill={C.dot} />
-    {/* Generatrix */}
-    <line x1="80" y1="114" x2="136" y2="114" stroke={C.diag} strokeWidth="1.5" />
-    {/* Labels */}
-    <Lbl x={80} y={6} text="V" color={C.shape} size={12} />
-    <Lbl x={88} y={65} text="h" color={C.height} size={12} />
-    <Lbl x={110} y={108} text="R" color={C.diag} size={12} />
-    <Lbl x={116} y={64} text="G" color={C.shape} size={12} />
-  </svg>
-);
+      {/* Top face: A'-B'-C'-D' (A'-D' and D'-C' missing from above) */}
+      <line x1={vAp.x} y1={vAp.y} x2={vDp.x} y2={vDp.y} {...blue} />
+      <line x1={vDp.x} y1={vDp.y} x2={vCp.x} y2={vCp.y} {...blue} />
 
-const SVGTrunchiDeCon = () => (
-  <svg viewBox="0 0 160 140" width="160" height="140">
-    {/* Large base ellipse centre (80,118) rx=56 */}
-    <ellipse cx="80" cy="118" rx="56" ry="15" fill="none" stroke={C.shape} strokeWidth="2.3" />
-    <ellipse
-      cx="80"
-      cy="118"
-      rx="56"
-      ry="15"
-      fill="none"
-      stroke={C.hidden}
-      strokeWidth="1.3"
-      strokeDasharray="5,3"
-    />
-    {/* Small top ellipse centre (80,36) rx=28 */}
-    <ellipse cx="80" cy="36" rx="28" ry="9" fill="none" stroke={C.shape} strokeWidth="2.3" />
-    {/* Lateral lines */}
-    <line x1="24" y1="118" x2="52" y2="36" stroke={C.shape} strokeWidth="2.3" />
-    <line x1="136" y1="118" x2="108" y2="36" stroke={C.shape} strokeWidth="2.3" />
-    {/* Axis */}
-    <line
-      x1="80"
-      y1="36"
-      x2="80"
-      y2="118"
-      stroke={C.height}
-      strokeWidth="1.5"
-      strokeDasharray="4,3"
-    />
-    <circle cx="80" cy="36" r="2.5" fill={C.dot} />
-    <circle cx="80" cy="118" r="2.5" fill={C.dot} />
-    {/* Generatrix */}
-    <line x1="80" y1="118" x2="136" y2="118" stroke={C.diag} strokeWidth="1.5" />
-    <line x1="80" y1="36" x2="108" y2="36" stroke={C.diag} strokeWidth="1.5" />
-    {/* Labels */}
-    <Lbl x={110} y={108} text="R" color={C.diag} size={12} />
-    <Lbl x={96} y={30} text="r" color={C.diag} size={12} />
-    <Lbl x={88} y={77} text="h" color={C.height} size={12} />
-    <Lbl x={122} y={77} text="G" color={C.shape} size={12} />
-    {/* Generatrix line to show G */}
-    <line
-      x1="108"
-      y1="36"
-      x2="136"
-      y2="118"
-      stroke={C.shape}
-      strokeWidth="1.2"
-      strokeDasharray="4,3"
-    />
-  </svg>
-);
+      {/* Vertex labels */}
+      <VLbl x={vA.x - 2} y={vA.y + 9} text="A" anchor="end" />
+      <VLbl x={vB.x + 2} y={vB.y + 9} text="B" anchor="start" />
+      <VLbl x={vAp.x - 3} y={vAp.y - 8} text="A′" anchor="end" />
+      <VLbl x={vBp.x + 2} y={vBp.y - 8} text="B′" anchor="start" />
+      <VLbl x={vCp.x + 3} y={vCp.y - 5} text="C′" anchor="start" />
+      <VLbl x={vDp.x - 2} y={vDp.y - 5} text="D′" anchor="end" />
+      <VLbl x={vC.x + 3} y={vC.y + 4} text="C" anchor="start" color={C.hidden} />
+      <VLbl x={vD.x - 2} y={vD.y + 4} text="D" anchor="end" color={C.hidden} />
+
+      {/* Side label */}
+      <Lbl x={57} y={127} text="l" color={C.shape} size={12} />
+      <Lbl x={6} y={79} text="l" color={C.shape} size={12} anchor="middle" />
+    </svg>
+  );
+};
+
+const SVGParalelipiped = () => {
+  // Width a=84, height h=68, depth b oblique dx=28, dy=-20
+  const vA = { x: 12, y: 120 };
+  const vB = { x: 96, y: 120 };
+  const vAp = { x: 12, y: 52 };
+  const vBp = { x: 96, y: 52 };
+  const vC = { x: 124, y: 100 }; // hidden
+  const vCp = { x: 124, y: 32 };
+  const vD = { x: 40, y: 100 }; // hidden
+  const vDp = { x: 40, y: 32 };
+  const SW = 2.1,
+    SD = '5,3';
+  const blue = { stroke: C.shape, strokeWidth: SW, fill: 'none' };
+  const gray = { stroke: C.hidden, strokeWidth: 1.3, fill: 'none', strokeDasharray: SD };
+  const red = { stroke: C.height, strokeWidth: 1.4, fill: 'none', strokeDasharray: SD };
+
+  const pt = (v: { x: number; y: number }) => `${v.x},${v.y}`;
+
+  return (
+    <svg viewBox="0 0 155 138" width="155" height="138">
+      {/* Hidden */}
+      <line x1={vA.x} y1={vA.y} x2={vD.x} y2={vD.y} {...gray} />
+      <line x1={vD.x} y1={vD.y} x2={vC.x} y2={vC.y} {...gray} />
+      <line x1={vD.x} y1={vD.y} x2={vDp.x} y2={vDp.y} {...gray} />
+
+      {/* Space diagonal (red) */}
+      <line x1={vA.x} y1={vA.y} x2={vCp.x} y2={vCp.y} {...red} />
+
+      {/* Front face */}
+      <polygon
+        points={`${pt(vA)} ${pt(vB)} ${pt(vBp)} ${pt(vAp)}`}
+        fill="none"
+        stroke={C.shape}
+        strokeWidth={SW}
+        strokeLinejoin="round"
+      />
+
+      {/* Right face */}
+      <line x1={vB.x} y1={vB.y} x2={vC.x} y2={vC.y} {...blue} />
+      <line x1={vC.x} y1={vC.y} x2={vCp.x} y2={vCp.y} {...blue} />
+      <line x1={vCp.x} y1={vCp.y} x2={vBp.x} y2={vBp.y} {...blue} />
+
+      {/* Top face remaining edges */}
+      <line x1={vAp.x} y1={vAp.y} x2={vDp.x} y2={vDp.y} {...blue} />
+      <line x1={vDp.x} y1={vDp.y} x2={vCp.x} y2={vCp.y} {...blue} />
+
+      {/* Vertex labels */}
+      <VLbl x={vA.x - 2} y={vA.y + 9} text="A" anchor="end" />
+      <VLbl x={vB.x + 2} y={vB.y + 9} text="B" anchor="start" />
+      <VLbl x={vAp.x - 3} y={vAp.y - 7} text="A′" anchor="end" />
+      <VLbl x={vBp.x + 2} y={vBp.y - 7} text="B′" anchor="start" />
+      <VLbl x={vCp.x + 3} y={vCp.y - 5} text="C′" anchor="start" />
+      <VLbl x={vDp.x - 2} y={vDp.y - 5} text="D′" anchor="end" />
+      <VLbl x={vC.x + 3} y={vC.y + 4} text="C" anchor="start" color={C.hidden} />
+      <VLbl x={vD.x - 2} y={vD.y + 4} text="D" anchor="end" color={C.hidden} />
+
+      {/* Dimension labels */}
+      <Lbl x={54} y={130} text="a" color={C.shape} size={12} />
+      <Lbl x={4} y={86} text="b" color={C.shape} size={12} anchor="middle" />
+      <Lbl x={112} y={76} text="h" color={C.height} size={12} />
+      <Lbl x={74} y={70} text="dp" color={C.height} size={10} />
+    </svg>
+  );
+};
+
+const SVGPrisma = () => {
+  // Right triangular prism
+  // Front triangle: A(18,118) B(108,118) C(63,34)
+  // Back triangle (offset +30,-22): A'(48,96) B'(138,96) C'(93,12)
+  const vA = { x: 18, y: 118 };
+  const vB = { x: 108, y: 118 };
+  const vC = { x: 63, y: 34 };
+  const vAp = { x: 48, y: 96 }; // hidden
+  const vBp = { x: 138, y: 96 };
+  const vCp = { x: 93, y: 12 };
+  const SW = 2.1,
+    SD = '5,3';
+  const blue = { stroke: C.shape, strokeWidth: SW, fill: 'none' };
+  const gray = { stroke: C.hidden, strokeWidth: 1.3, fill: 'none', strokeDasharray: SD };
+
+  return (
+    <svg viewBox="0 0 158 132" width="158" height="132">
+      {/* Hidden back triangle and hidden lateral edge */}
+      <polygon
+        points={`${vAp.x},${vAp.y} ${vBp.x},${vBp.y} ${vCp.x},${vCp.y}`}
+        fill="none"
+        stroke={C.hidden}
+        strokeWidth={1.3}
+        strokeDasharray={SD}
+        strokeLinejoin="round"
+      />
+      <line x1={vA.x} y1={vA.y} x2={vAp.x} y2={vAp.y} {...gray} />
+
+      {/* Front triangle */}
+      <polygon
+        points={`${vA.x},${vA.y} ${vB.x},${vB.y} ${vC.x},${vC.y}`}
+        fill="none"
+        stroke={C.shape}
+        strokeWidth={SW}
+        strokeLinejoin="round"
+      />
+
+      {/* Visible lateral edges */}
+      <line x1={vB.x} y1={vB.y} x2={vBp.x} y2={vBp.y} {...blue} />
+      <line x1={vC.x} y1={vC.y} x2={vCp.x} y2={vCp.y} {...blue} />
+
+      {/* Height line (red dashed) */}
+      <line
+        x1={63}
+        y1={118}
+        x2={63}
+        y2={34}
+        stroke={C.height}
+        strokeWidth={1.5}
+        strokeDasharray="4,3"
+      />
+      <RightAngleMark cx={63} cy={118} size={6} rotate={0} />
+
+      {/* Vertex labels */}
+      <VLbl x={vA.x - 3} y={vA.y + 9} text="A" anchor="end" />
+      <VLbl x={vB.x + 3} y={vB.y + 9} text="B" anchor="start" />
+      <VLbl x={vC.x} y={vC.y - 8} text="C" />
+      <VLbl x={vAp.x - 2} y={vAp.y - 6} text="A′" anchor="end" color={C.hidden} />
+      <VLbl x={vBp.x + 3} y={vBp.y - 6} text="B′" anchor="start" />
+      <VLbl x={vCp.x + 3} y={vCp.y - 6} text="C′" anchor="start" />
+
+      {/* Dimension labels */}
+      <Lbl x={63} y={128} text="Ab" color={C.shape} size={11} />
+      <Lbl x={74} y={76} text="h" color={C.height} size={12} />
+    </svg>
+  );
+};
+
+const SVGPiramida = () => {
+  // Square pyramid: base ABCD (parallelogram in projection), apex V, centre O, midpoint M
+  const vA = { x: 16, y: 120 }; // front-left base
+  const vB = { x: 110, y: 120 }; // front-right base
+  const vC_ = { x: 130, y: 94 }; // back-right base (hidden)
+  const vD = { x: 36, y: 94 }; // back-left base (hidden)
+  const vV = { x: 73, y: 14 }; // apex
+  // Centre of base (intersection of diagonals)
+  const oX = (vA.x + vC_.x) / 2; // ≈ 73
+  const oY = (vA.y + vC_.y) / 2; // ≈ 107
+  // Midpoint of front base edge AB
+  const mX = (vA.x + vB.x) / 2; // ≈ 63
+  const mY = vA.y; // 120
+  const SD = '5,3';
+  const gray = { stroke: C.hidden, strokeWidth: 1.3, fill: 'none', strokeDasharray: SD };
+
+  return (
+    <svg viewBox="0 0 158 138" width="158" height="138">
+      {/* Hidden base diagonals */}
+      <line x1={vA.x} y1={vA.y} x2={vC_.x} y2={vC_.y} {...gray} />
+      <line x1={vB.x} y1={vB.y} x2={vD.x} y2={vD.y} {...gray} />
+
+      {/* Hidden base back edges */}
+      <line x1={vA.x} y1={vA.y} x2={vD.x} y2={vD.y} {...gray} />
+      <line x1={vD.x} y1={vD.y} x2={vC_.x} y2={vC_.y} {...gray} />
+
+      {/* Hidden lateral edge V-D */}
+      <line x1={vV.x} y1={vV.y} x2={vD.x} y2={vD.y} {...gray} />
+
+      {/* Height V→O (red dashed) */}
+      <line
+        x1={vV.x}
+        y1={vV.y}
+        x2={oX}
+        y2={oY}
+        stroke={C.height}
+        strokeWidth={1.5}
+        strokeDasharray="4,3"
+      />
+
+      {/* Apothem O→M (red dashed) */}
+      <line
+        x1={oX}
+        y1={oY}
+        x2={mX}
+        y2={mY}
+        stroke={C.height}
+        strokeWidth={1.3}
+        strokeDasharray="4,3"
+      />
+
+      {/* Visible base edges */}
+      <line x1={vA.x} y1={vA.y} x2={vB.x} y2={vB.y} stroke={C.shape} strokeWidth={2.2} />
+      <line x1={vB.x} y1={vB.y} x2={vC_.x} y2={vC_.y} stroke={C.shape} strokeWidth={2.2} />
+
+      {/* Visible lateral edges V-A, V-B, V-C */}
+      <line x1={vV.x} y1={vV.y} x2={vA.x} y2={vA.y} stroke={C.shape} strokeWidth={2.2} />
+      <line x1={vV.x} y1={vV.y} x2={vB.x} y2={vB.y} stroke={C.shape} strokeWidth={2.2} />
+      <line x1={vV.x} y1={vV.y} x2={vC_.x} y2={vC_.y} stroke={C.shape} strokeWidth={2.2} />
+
+      {/* Centre dot O */}
+      <circle cx={oX} cy={oY} r={3} fill={C.dot} />
+
+      {/* Vertex labels */}
+      <VLbl x={vV.x} y={vV.y - 8} text="V" />
+      <VLbl x={vA.x - 3} y={vA.y + 9} text="A" anchor="end" />
+      <VLbl x={vB.x + 3} y={vB.y + 9} text="B" anchor="start" />
+      <VLbl x={vC_.x + 3} y={vC_.y + 2} text="C" anchor="start" color={C.hidden} />
+      <VLbl x={vD.x - 3} y={vD.y - 6} text="D" anchor="end" color={C.hidden} />
+      <VLbl x={oX - 8} y={oY - 2} text="O" anchor="end" />
+      <VLbl x={mX} y={mY + 9} text="M" />
+
+      {/* Dimension labels */}
+      <Lbl x={88} y={62} text="h" color={C.height} size={12} />
+      <Lbl x={54} y={116} text="ap" color={C.height} size={10} />
+    </svg>
+  );
+};
+
+const SVGSfera = () => {
+  const cx = 80,
+    cy = 72,
+    r = 54;
+  const Ax = cx - r,
+    Bx = cx + r;
+  // Equator minor radius ≈ 0.28 of major
+  const ry = Math.round(r * 0.28);
+  return (
+    <svg viewBox="0 0 160 140" width="160" height="140">
+      {/* Back half of equator (dashed) */}
+      <path
+        d={`M${Ax},${cy} A${r},${ry} 0 0 1 ${Bx},${cy}`}
+        fill="none"
+        stroke={C.hidden}
+        strokeWidth={1.5}
+        strokeDasharray="5,3"
+      />
+      {/* Main circle */}
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke={C.shape} strokeWidth={2.4} />
+      {/* Front half of equator */}
+      <path
+        d={`M${Ax},${cy} A${r},${ry} 0 0 0 ${Bx},${cy}`}
+        fill="none"
+        stroke={C.shape}
+        strokeWidth={1.8}
+      />
+      {/* Diameter A–O–B (red dashed) */}
+      <line
+        x1={Ax}
+        y1={cy}
+        x2={Bx}
+        y2={cy}
+        stroke={C.height}
+        strokeWidth={1.6}
+        strokeDasharray="4,3"
+      />
+      {/* Centre dot */}
+      <circle cx={cx} cy={cy} r={3} fill={C.dot} />
+      {/* Labels */}
+      <VLbl x={Ax - 5} y={cy} text="A" anchor="end" />
+      <VLbl x={cx} y={cy - 10} text="O" />
+      <VLbl x={Bx + 5} y={cy} text="B" anchor="start" />
+      <Lbl x={cx + 28} y={cy - 10} text="R" color={C.height} size={12} />
+    </svg>
+  );
+};
+
+const SVGCilindru = () => {
+  const cx = 80,
+    rx = 50,
+    ry = 13;
+  const topY = 28,
+    botY = 118;
+  return (
+    <svg viewBox="0 0 160 140" width="160" height="140">
+      {/* Back half of bottom ellipse (dashed) */}
+      <path
+        d={`M${cx - rx},${botY} A${rx},${ry} 0 0 1 ${cx + rx},${botY}`}
+        fill="none"
+        stroke={C.hidden}
+        strokeWidth={1.3}
+        strokeDasharray="5,3"
+      />
+
+      {/* Lateral sides */}
+      <line x1={cx - rx} y1={topY} x2={cx - rx} y2={botY} stroke={C.shape} strokeWidth={2.2} />
+      <line x1={cx + rx} y1={topY} x2={cx + rx} y2={botY} stroke={C.shape} strokeWidth={2.2} />
+
+      {/* Top ellipse (fully visible) */}
+      <ellipse cx={cx} cy={topY} rx={rx} ry={ry} fill="none" stroke={C.shape} strokeWidth={2.2} />
+
+      {/* Front half of bottom ellipse */}
+      <path
+        d={`M${cx - rx},${botY} A${rx},${ry} 0 0 0 ${cx + rx},${botY}`}
+        fill="none"
+        stroke={C.shape}
+        strokeWidth={2.2}
+      />
+
+      {/* Axis O'–O (red dashed) */}
+      <line
+        x1={cx}
+        y1={topY}
+        x2={cx}
+        y2={botY}
+        stroke={C.height}
+        strokeWidth={1.5}
+        strokeDasharray="4,3"
+      />
+
+      {/* Radius O'–B' (red solid) */}
+      <line x1={cx} y1={topY} x2={cx + rx} y2={topY} stroke={C.height} strokeWidth={1.7} />
+
+      {/* Centre dots */}
+      <circle cx={cx} cy={topY} r={3} fill={C.dot} />
+      <circle cx={cx} cy={botY} r={3} fill={C.dot} />
+
+      {/* Top labels */}
+      <VLbl x={cx - rx - 3} y={topY} text="A′" anchor="end" size={10} />
+      <VLbl x={cx} y={topY - 12} text="O′" size={10} />
+      <VLbl x={cx + rx + 3} y={topY} text="B′" anchor="start" size={10} />
+
+      {/* Bottom labels */}
+      <VLbl x={cx - rx - 3} y={botY + 2} text="A" anchor="end" size={10} />
+      <VLbl x={cx} y={botY + 13} text="O" size={10} />
+      <VLbl x={cx + rx + 3} y={botY + 2} text="B" anchor="start" size={10} />
+
+      {/* Dimension labels */}
+      <Lbl x={cx + 26} y={topY - 7} text="R" color={C.height} size={11} />
+      <Lbl x={cx + rx + 13} y={(topY + botY) / 2} text="h" color={C.height} size={12} />
+    </svg>
+  );
+};
+
+const SVGCon = () => {
+  const cx = 80,
+    rx = 52,
+    ry = 14;
+  const topY = 14,
+    botY = 116;
+  return (
+    <svg viewBox="0 0 160 140" width="160" height="140">
+      {/* Back half of base ellipse (dashed) */}
+      <path
+        d={`M${cx - rx},${botY} A${rx},${ry} 0 0 1 ${cx + rx},${botY}`}
+        fill="none"
+        stroke={C.hidden}
+        strokeWidth={1.3}
+        strokeDasharray="5,3"
+      />
+
+      {/* Lateral sides */}
+      <line x1={cx} y1={topY} x2={cx - rx} y2={botY} stroke={C.shape} strokeWidth={2.3} />
+      <line x1={cx} y1={topY} x2={cx + rx} y2={botY} stroke={C.shape} strokeWidth={2.3} />
+
+      {/* Front half of base ellipse */}
+      <path
+        d={`M${cx - rx},${botY} A${rx},${ry} 0 0 0 ${cx + rx},${botY}`}
+        fill="none"
+        stroke={C.shape}
+        strokeWidth={2.3}
+      />
+
+      {/* Axis V–O (red dashed) */}
+      <line
+        x1={cx}
+        y1={topY}
+        x2={cx}
+        y2={botY}
+        stroke={C.height}
+        strokeWidth={1.5}
+        strokeDasharray="4,3"
+      />
+
+      {/* Radius O–B (red solid) */}
+      <line x1={cx} y1={botY} x2={cx + rx} y2={botY} stroke={C.height} strokeWidth={1.6} />
+
+      {/* Centre dot */}
+      <circle cx={cx} cy={botY} r={3} fill={C.dot} />
+
+      {/* Labels */}
+      <VLbl x={cx} y={topY - 8} text="V" size={11} />
+      <VLbl x={cx - rx - 4} y={botY} text="A" anchor="end" size={10} />
+      <VLbl x={cx} y={botY + 12} text="O" size={10} />
+      <VLbl x={cx + rx + 4} y={botY} text="B" anchor="start" size={10} />
+
+      {/* Dimension labels */}
+      <Lbl x={cx + 11} y={(topY + botY) / 2} text="h" color={C.height} size={12} />
+      <Lbl x={cx + rx / 2 + 4} y={botY - 6} text="R" color={C.height} size={11} />
+      <Lbl x={cx + rx / 2 + 16} y={(topY + botY) / 2 - 8} text="G" color={C.shape} size={12} />
+    </svg>
+  );
+};
+
+const SVGTrunchiDeCon = () => {
+  const cx = 80;
+  const botY = 118,
+    topY = 40;
+  const botRx = 52,
+    botRy = 14;
+  const topRx = 26,
+    topRy = 8;
+  return (
+    <svg viewBox="0 0 160 140" width="160" height="140">
+      {/* Back half of bottom ellipse (dashed) */}
+      <path
+        d={`M${cx - botRx},${botY} A${botRx},${botRy} 0 0 1 ${cx + botRx},${botY}`}
+        fill="none"
+        stroke={C.hidden}
+        strokeWidth={1.3}
+        strokeDasharray="5,3"
+      />
+
+      {/* Lateral sides */}
+      <line
+        x1={cx - botRx}
+        y1={botY}
+        x2={cx - topRx}
+        y2={topY}
+        stroke={C.shape}
+        strokeWidth={2.3}
+      />
+      <line
+        x1={cx + botRx}
+        y1={botY}
+        x2={cx + topRx}
+        y2={topY}
+        stroke={C.shape}
+        strokeWidth={2.3}
+      />
+
+      {/* Top ellipse (fully visible) */}
+      <ellipse
+        cx={cx}
+        cy={topY}
+        rx={topRx}
+        ry={topRy}
+        fill="none"
+        stroke={C.shape}
+        strokeWidth={2.3}
+      />
+
+      {/* Front half of bottom ellipse */}
+      <path
+        d={`M${cx - botRx},${botY} A${botRx},${botRy} 0 0 0 ${cx + botRx},${botY}`}
+        fill="none"
+        stroke={C.shape}
+        strokeWidth={2.3}
+      />
+
+      {/* Axis O'–O (red dashed) */}
+      <line
+        x1={cx}
+        y1={topY}
+        x2={cx}
+        y2={botY}
+        stroke={C.height}
+        strokeWidth={1.5}
+        strokeDasharray="4,3"
+      />
+
+      {/* Radii: top O'–B' and bottom O–B */}
+      <line x1={cx} y1={topY} x2={cx + topRx} y2={topY} stroke={C.height} strokeWidth={1.6} />
+      <line x1={cx} y1={botY} x2={cx + botRx} y2={botY} stroke={C.height} strokeWidth={1.6} />
+
+      {/* Centre dots */}
+      <circle cx={cx} cy={topY} r={2.5} fill={C.dot} />
+      <circle cx={cx} cy={botY} r={2.5} fill={C.dot} />
+
+      {/* Top labels */}
+      <VLbl x={cx - topRx - 3} y={topY} text="A′" anchor="end" size={10} />
+      <VLbl x={cx} y={topY - 12} text="O′" size={10} />
+      <VLbl x={cx + topRx + 3} y={topY} text="B′" anchor="start" size={10} />
+
+      {/* Bottom labels */}
+      <VLbl x={cx - botRx - 4} y={botY} text="A" anchor="end" size={10} />
+      <VLbl x={cx} y={botY + 13} text="O" size={10} />
+      <VLbl x={cx + botRx + 4} y={botY} text="B" anchor="start" size={10} />
+
+      {/* Dimension labels */}
+      <Lbl x={cx + topRx / 2 + 6} y={topY - 6} text="r" color={C.height} size={11} />
+      <Lbl x={cx + botRx / 2 + 4} y={botY - 7} text="R" color={C.height} size={11} />
+      <Lbl x={cx + 10} y={(topY + botY) / 2} text="h" color={C.height} size={12} />
+      <Lbl
+        x={cx + botRx / 2 + topRx / 2 + 14}
+        y={(topY + botY) / 2 + 4}
+        text="G"
+        color={C.shape}
+        size={11}
+      />
+    </svg>
+  );
+};
 
 // ─── Figure data ──────────────────────────────────────────────────────────────
 
 interface FigureData {
   id: string;
   name: string;
-  accent: string; // header colour
+  accent: string;
   svg: React.ReactElement;
   formulas: { label: string; expr: string }[];
 }
@@ -917,7 +1067,7 @@ const FIGURES_2D: FigureData[] = [
     formulas: [
       { label: 'A', expr: '(B + b) · h / 2' },
       { label: 'A', expr: 'lₘ · h' },
-      { label: 'lₘ', expr: '(B + b) / 2  (linie mijlocie)' },
+      { label: 'lₘ', expr: '(B + b) / 2' },
     ],
   },
   {
@@ -928,7 +1078,7 @@ const FIGURES_2D: FigureData[] = [
     formulas: [
       { label: 'A', expr: 'π · R²' },
       { label: 'L', expr: '2 · π · R' },
-      { label: 'd', expr: '2R  (diametru)' },
+      { label: 'd', expr: '2R' },
     ],
   },
   {
@@ -938,7 +1088,7 @@ const FIGURES_2D: FigureData[] = [
     svg: <SVGSectorCircular />,
     formulas: [
       { label: 'A', expr: 'π · R² · α / 360°' },
-      { label: 'l', expr: 'π · R · α / 180°  (arc)' },
+      { label: 'l', expr: 'π · R · α / 180°' },
     ],
   },
 ];
@@ -952,7 +1102,7 @@ const FIGURES_3D: FigureData[] = [
     formulas: [
       { label: 'Al', expr: '6l²' },
       { label: 'V', expr: 'l³' },
-      { label: 'd', expr: 'l · √3  (diagonala)' },
+      { label: 'd', expr: 'l · √3' },
     ],
   },
   {
@@ -963,7 +1113,7 @@ const FIGURES_3D: FigureData[] = [
     formulas: [
       { label: 'Al', expr: '2(ab + bh + ah)' },
       { label: 'V', expr: 'a · b · h' },
-      { label: 'd', expr: '√(a² + b² + h²)' },
+      { label: 'dp', expr: '√(a² + b² + h²)' },
     ],
   },
   {
@@ -1033,7 +1183,7 @@ const FIGURES_3D: FigureData[] = [
   },
 ];
 
-// ─── Card component ───────────────────────────────────────────────────────────
+// ─── Card ─────────────────────────────────────────────────────────────────────
 
 function FigureCard({ fig }: { fig: FigureData }) {
   return (
@@ -1048,7 +1198,6 @@ function FigureCard({ fig }: { fig: FigureData }) {
         border: '1px solid #e5e7eb',
       }}
     >
-      {/* Coloured header */}
       <div
         style={{
           background: fig.accent,
@@ -1063,7 +1212,6 @@ function FigureCard({ fig }: { fig: FigureData }) {
         {fig.name}
       </div>
 
-      {/* SVG drawing — centred */}
       <div
         style={{
           display: 'flex',
@@ -1077,7 +1225,6 @@ function FigureCard({ fig }: { fig: FigureData }) {
         {fig.svg}
       </div>
 
-      {/* Formulas */}
       <div
         style={{
           padding: '10px 14px 14px',
@@ -1137,62 +1284,50 @@ export default function GeometriePage({ onBack }: { onBack: () => void }) {
         flexDirection: 'column',
       }}
     >
-      {/* ── Header ── */}
+      {/* Header */}
       <div
         style={{
-          background: '#0f172a',
+          background: '#1e293b',
           color: '#fff',
-          padding: '0 20px',
+          padding: '12px 20px',
           display: 'flex',
           alignItems: 'center',
-          gap: 16,
-          height: 56,
-          flexShrink: 0,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+          gap: 14,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
         }}
       >
         <button
           onClick={onBack}
           style={{
-            background: 'none',
+            background: 'transparent',
             border: 'none',
             color: '#94a3b8',
             cursor: 'pointer',
             fontSize: 22,
-            padding: '0 4px',
             lineHeight: 1,
+            padding: '2px 6px',
+            borderRadius: 6,
           }}
-          title="Înapoi la tablă"
         >
           ←
         </button>
-        <h1
-          style={{
-            margin: 0,
-            fontSize: 17,
-            fontWeight: 700,
-            letterSpacing: '0.01em',
-            color: '#f1f5f9',
-          }}
-        >
-          Figuri geometrice
-        </h1>
-        {/* Tabs */}
-        <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+        <span style={{ fontWeight: 700, fontSize: 17 }}>Figuri geometrice</span>
+
+        {/* Tab bar */}
+        <div style={{ display: 'flex', gap: 6, marginLeft: 12 }}>
           {(['2d', '3d'] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
               style={{
-                background: tab === t ? '#3b82f6' : 'rgba(255,255,255,0.08)',
-                color: tab === t ? '#fff' : '#94a3b8',
-                border: 'none',
-                borderRadius: 20,
                 padding: '5px 16px',
-                fontSize: 13,
-                fontWeight: 600,
+                borderRadius: 20,
+                border: 'none',
+                background: tab === t ? '#3b82f6' : 'rgba(255,255,255,0.1)',
+                color: '#fff',
                 cursor: 'pointer',
-                transition: 'background 0.15s',
+                fontWeight: tab === t ? 700 : 400,
+                fontSize: 13,
               }}
             >
               {t === '2d' ? 'Figuri plane' : 'Corpuri geometrice'}
@@ -1201,46 +1336,15 @@ export default function GeometriePage({ onBack }: { onBack: () => void }) {
         </div>
       </div>
 
-      {/* ── Section subtitle ── */}
+      {/* Grid */}
       <div
         style={{
-          background: '#fff',
-          borderBottom: '1px solid #e2e8f0',
-          padding: '10px 24px',
-          fontSize: 13,
-          color: '#475569',
-          flexShrink: 0,
-        }}
-      >
-        {tab === '2d' ? (
-          <>
-            <strong>Arii și perimetre</strong> — formule pentru figuri plane cu notații standard.
-            <span style={{ color: '#dc2626', marginLeft: 10 }}>● înălțime</span>
-            <span style={{ color: '#16a34a', marginLeft: 10 }}>● diagonală</span>
-            <span style={{ color: '#d97706', marginLeft: 10 }}>● unghi</span>
-          </>
-        ) : (
-          <>
-            <strong>Arii și volume</strong> — formule pentru corpuri geometrice.
-            <span style={{ marginLeft: 6 }}>
-              Al = arie laterală · At = arie totală · Ab = arie bază
-            </span>
-          </>
-        )}
-      </div>
-
-      {/* ── Grid of cards ── */}
-      <div
-        style={{
-          padding: '20px 20px 32px',
+          flex: 1,
+          padding: '20px',
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
           gap: 16,
-          maxWidth: 1280,
-          width: '100%',
-          margin: '0 auto',
-          boxSizing: 'border-box',
-          flexGrow: 1,
+          alignContent: 'start',
         }}
       >
         {figures.map((fig) => (
