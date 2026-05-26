@@ -2,7 +2,7 @@
  * boardSync.ts — Firestore real-time sync for collaborative boards.
  *
  * Data model:
- *   boards/{boardId}               — board metadata (createdBy, createdAt)
+ *   boards/{boardId}               — board metadata (createdBy, title, createdAt)
  *   boards/{boardId}/items/{id}    — one DrawItem per document
  *
  * Each item document stores the DrawItem fields plus:
@@ -19,13 +19,19 @@ import {
   collection,
   doc,
   setDoc,
+  updateDoc,
   deleteDoc,
+  getDocs,
   onSnapshot,
   serverTimestamp,
   query,
   orderBy,
+  where,
+  writeBatch,
 } from 'firebase/firestore';
 import type { Unsubscribe } from 'firebase/firestore';
+
+// ─── Item sync ────────────────────────────────────────────────────────────────
 
 // A Firestore item as returned by the listener.
 // Contains all DrawItem fields plus the Firestore document id and authorId.
@@ -57,7 +63,6 @@ export function subscribeToBoardItems(
 }
 
 // Write a single DrawItem to Firestore.
-// The item must already have an `id` (used as the Firestore document id).
 export async function addItemToBoard(
   boardId: string,
   itemId: string,
@@ -69,14 +74,54 @@ export async function addItemToBoard(
   await setDoc(ref, { ...data, authorId, createdAt: serverTimestamp() });
 }
 
-// Delete a single item from Firestore.
-// deleteDoc on a non-existent doc is silently ignored.
+// Delete a single item from Firestore (no-op if doc doesn't exist).
 export async function removeItemFromBoard(boardId: string, itemId: string): Promise<void> {
   await deleteDoc(doc(db, 'boards', boardId, 'items', itemId));
 }
 
+// ─── Board CRUD ───────────────────────────────────────────────────────────────
+
+export interface BoardMeta {
+  id: string;
+  title: string;
+  createdAt: Date;
+  createdBy: string;
+}
+
 // Create the board metadata document.
-export async function createBoard(boardId: string, createdBy: string): Promise<void> {
-  const ref = doc(db, 'boards', boardId);
-  await setDoc(ref, { createdBy, createdAt: serverTimestamp() });
+export async function createBoard(
+  boardId: string,
+  createdBy: string,
+  title: string
+): Promise<void> {
+  await setDoc(doc(db, 'boards', boardId), { createdBy, title, createdAt: serverTimestamp() });
+}
+
+// Rename a board (only the owner should call this).
+export async function updateBoardTitle(boardId: string, title: string): Promise<void> {
+  await updateDoc(doc(db, 'boards', boardId), { title });
+}
+
+// Fetch all boards created by a specific user, sorted newest first.
+// Uses a single-field where() so no composite index is needed.
+export async function getBoardsByUser(userId: string): Promise<BoardMeta[]> {
+  const q = query(collection(db, 'boards'), where('createdBy', '==', userId));
+  const snap = await getDocs(q);
+  return snap.docs
+    .map((d) => ({
+      id: d.id,
+      title: (d.data().title as string) || `Tablă ${d.id}`,
+      createdAt: (d.data().createdAt?.toDate() as Date) ?? new Date(),
+      createdBy: d.data().createdBy as string,
+    }))
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+// Delete a board and ALL its items (Firestore doesn't cascade deletes).
+export async function deleteBoard(boardId: string): Promise<void> {
+  const itemsSnap = await getDocs(collection(db, 'boards', boardId, 'items'));
+  const batch = writeBatch(db);
+  itemsSnap.forEach((d) => batch.delete(d.ref));
+  batch.delete(doc(db, 'boards', boardId));
+  await batch.commit();
 }

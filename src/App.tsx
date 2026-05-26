@@ -8,10 +8,11 @@ const FormulaPage = lazy(() => import('./components/FormulaPage'));
 const SubiectePage = lazy(() => import('./components/SubiectePage'));
 const TestGenerator = lazy(() => import('./components/TestGenerator'));
 const ProblemsReview = lazy(() => import('./components/ProblemsReview'));
+const ProfilePage = lazy(() => import('./components/ProfilePage'));
 
 // Discriminated union type — all possible page names.
 // TypeScript exhaustively checks every branch against this type.
-type Page = 'board' | 'formulas' | 'subiecte' | 'test' | 'review';
+type Page = 'board' | 'formulas' | 'subiecte' | 'test' | 'review' | 'profile';
 
 // Generic Suspense wrapper — reused for all lazy pages.
 // The fallback has a dark background to match all page themes.
@@ -88,11 +89,19 @@ export default function App(): JSX.Element {
       </PageLoader>
     );
 
+  if (page === 'profile')
+    return (
+      <PageLoader>
+        <ProfilePage onBack={() => setPage('board')} onOpenBoard={() => setPage('board')} />
+      </PageLoader>
+    );
+
   // Default page: the whiteboard canvas
   return (
     <CanvasBoard
       onOpenFormulas={() => setPage('formulas')}
       onOpenSubiecte={() => setPage('subiecte')}
+      onOpenProfile={() => setPage('profile')}
     />
   );
 }

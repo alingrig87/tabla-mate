@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { GeomKind, GeomItem, SHAPE_GROUPS, drawGeom, drawGeomPreview } from '../shapes';
 import { SUBIECTE } from '../data/subiecte';
 import { useAuth } from '../context/AuthContext';
@@ -565,7 +566,9 @@ function ShapeIcon({ kind }: { kind: GeomKind }) {
   return <canvas ref={ref} style={{ width: 40, height: 40 }} />;
 }
 
-// ─── Pill button ──────────────────────────────────────────────────────────────
+// ─── Pill button + tooltip ────────────────────────────────────────────────────
+// The tooltip is rendered via createPortal into document.body so it's never
+// clipped by the toolbar's overflow-x:auto scroll container.
 
 function PillBtn({
   active,
@@ -580,36 +583,88 @@ function PillBtn({
   disabled?: boolean;
   title?: string;
 }) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [tipPos, setTipPos] = useState<{ x: number; y: number } | null>(null);
+
+  function showTip() {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setTipPos({ x: r.left + r.width / 2, y: r.top });
+  }
+
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      style={{
-        width: 40,
-        height: 40,
-        borderRadius: '50%',
-        border: 'none',
-        padding: 0,
-        flexShrink: 0,
-        background: active ? '#1a1a1a' : 'transparent',
-        color: active ? '#fff' : disabled ? '#ccc' : '#333',
-        cursor: disabled ? 'default' : 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        transition: 'background 0.12s',
-        userSelect: 'none',
-      }}
-      onMouseEnter={(e) => {
-        if (!active && !disabled) (e.currentTarget as HTMLElement).style.background = '#f0f0f0';
-      }}
-      onMouseLeave={(e) => {
-        if (!active && !disabled) (e.currentTarget as HTMLElement).style.background = 'transparent';
-      }}
-    >
-      {children}
-    </button>
+    <>
+      <button
+        ref={btnRef}
+        onClick={onClick}
+        disabled={disabled}
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: '50%',
+          border: 'none',
+          padding: 0,
+          flexShrink: 0,
+          background: active ? '#1a1a1a' : 'transparent',
+          color: active ? '#fff' : disabled ? '#ccc' : '#333',
+          cursor: disabled ? 'default' : 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: 'background 0.12s',
+          userSelect: 'none',
+        }}
+        onMouseEnter={(e) => {
+          if (!active && !disabled) (e.currentTarget as HTMLElement).style.background = '#f0f0f0';
+          showTip();
+        }}
+        onMouseLeave={(e) => {
+          if (!active && !disabled)
+            (e.currentTarget as HTMLElement).style.background = 'transparent';
+          setTipPos(null);
+        }}
+      >
+        {children}
+      </button>
+
+      {/* Portal tooltip — rendered in <body> to escape toolbar overflow clipping */}
+      {tipPos &&
+        title &&
+        createPortal(
+          <div
+            style={{
+              position: 'fixed',
+              left: tipPos.x,
+              top: tipPos.y - 8,
+              transform: 'translate(-50%, -100%)',
+              background: '#1a1a1a',
+              color: '#fff',
+              padding: '5px 9px',
+              borderRadius: 7,
+              fontSize: 11,
+              whiteSpace: 'nowrap',
+              pointerEvents: 'none',
+              zIndex: 9999,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+              letterSpacing: '0.01em',
+            }}
+          >
+            {title}
+            {/* Arrow */}
+            <div
+              style={{
+                position: 'absolute',
+                top: '100%',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                borderLeft: '5px solid transparent',
+                borderRight: '5px solid transparent',
+                borderTop: '5px solid #1a1a1a',
+              }}
+            />
+          </div>,
+          document.body
+        )}
+    </>
   );
 }
 
@@ -640,14 +695,16 @@ const ZOOM_STEPS = [0.1, 0.15, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 2.5
 interface CanvasBoardProps {
   onOpenFormulas?: () => void;
   onOpenSubiecte?: () => void;
+  onOpenProfile?: () => void;
 }
 
 export default function CanvasBoard({
   onOpenFormulas,
   onOpenSubiecte,
+  onOpenProfile,
 }: CanvasBoardProps): JSX.Element {
   // ── Auth ──────────────────────────────────────────────────────────────────
-  const { user: authUser, loginWithGoogle, logout } = useAuth();
+  const { user: authUser, loginWithGoogle } = useAuth();
 
   // ── Collaborative board state ────────────────────────────────────────────
   // boardId is read from ?board=xxx URL param on load; set when creating a board.
@@ -1066,8 +1123,9 @@ export default function CanvasBoard({
   // ── Create & join board ────────────────────────────────────────────────────
   async function createAndJoinBoard() {
     const newBoardId = crypto.randomUUID().slice(0, 8);
+    const title = `Tablă · ${new Date().toLocaleDateString('ro-RO', { day: 'numeric', month: 'long' })}`;
     try {
-      await createBoard(newBoardId, authUser?.uid ?? 'anon');
+      await createBoard(newBoardId, authUser?.uid ?? 'anon', title);
     } catch (err) {
       console.error('[Board] create error:', err);
       alert('Nu am putut crea tabla. Verifică conexiunea.');
@@ -1666,17 +1724,17 @@ export default function CanvasBoard({
           )}
         </div>
 
-        {/* ── Login / Avatar button ────────────────────────────────────────
-            Shows a person icon when logged out; shows the Google avatar
-            (or initial) when logged in. Clicking the avatar logs out.       */}
+        {/* ── Login / Profile button ───────────────────────────────────────
+            Not logged in → Google login popup.
+            Logged in     → opens ProfilePage (logout is inside profile).    */}
         {!authUser ? (
           <PillBtn onClick={loginWithGoogle} title="Login cu Google (opțional)">
             <IconUser />
           </PillBtn>
         ) : (
           <button
-            onClick={logout}
-            title={`${authUser.displayName ?? authUser.email} — Click pentru logout`}
+            onClick={onOpenProfile}
+            title={`${authUser.displayName ?? authUser.email} — Profilul meu`}
             style={{
               width: 40,
               height: 40,
