@@ -11,6 +11,8 @@ export type GeomKind =
   | 'tri-isosceles'
   | 'tri-scalene'
   // Patrulater
+  | 'square-geom'
+  | 'rect-geom'
   | 'rhombus'
   | 'parallelogram'
   | 'trapezoid'
@@ -21,49 +23,53 @@ export type GeomKind =
   | 'hexagon'
   | 'heptagon'
   | 'octagon'
-  // Cercuri
+  // Cercuri & conice
+  | 'circle-geom'
   | 'arc'
   | 'sector'
   | 'annulus'
+  | 'ellipse'
   // 3D
   | 'cube'
   | 'cuboid'
   | 'prism-tri'
+  | 'prism-sq'
   | 'prism-hex'
+  | 'pyramid-tri'
   | 'pyramid-sq'
+  | 'frustum-pyramid'
   | 'tetrahedron'
   | 'cone'
+  | 'frustum-cone'
   | 'cylinder'
   | 'sphere';
 
 /**
  * Decoration toggles for a drawn geometric figure.
  * Each flag adds a layer of visual annotation on top of the base outline.
- * All flags are optional / default false — so existing drawings without
- * a `style` field render exactly as before (no decorations).
  */
 export interface GeomStyle {
   /** Draw altitude / height line in red with a right-angle mark */
   height?: boolean;
   /** Draw angle arc at the relevant vertex in amber */
   angle?: boolean;
-  /** Render dimension labels (a, b, h, R, …) next to each element */
+  /** Render dimension + vertex labels next to each element */
   labels?: boolean;
   /** Draw diagonal or midline in green dashed */
   diagonal?: boolean;
 }
 
 export interface GeomItem {
-  kind: 'geom'; // discriminator unic în DrawItem
-  id: string; // stable UUID — used as Firestore document id in collaborative mode
-  geomKind: GeomKind; // figura concretă
+  kind: 'geom';
+  id: string;
+  geomKind: GeomKind;
   color: string;
   width: number;
   x1: number;
   y1: number;
   x2: number;
   y2: number;
-  style?: GeomStyle; // optional visual decorations
+  style?: GeomStyle;
 }
 
 export interface ShapeGroup {
@@ -92,6 +98,8 @@ export const SHAPE_GROUPS: ShapeGroup[] = [
   {
     label: 'Patrulater',
     shapes: [
+      { kind: 'square-geom', label: 'Pătrat' },
+      { kind: 'rect-geom', label: 'Dreptunghi' },
       { kind: 'rhombus', label: 'Romb' },
       { kind: 'parallelogram', label: 'Paralelogram' },
       { kind: 'trapezoid', label: 'Trapez' },
@@ -109,11 +117,13 @@ export const SHAPE_GROUPS: ShapeGroup[] = [
     ],
   },
   {
-    label: 'Cercuri',
+    label: 'Cercuri & Conice',
     shapes: [
+      { kind: 'circle-geom', label: 'Cerc' },
       { kind: 'arc', label: 'Arc de cerc' },
-      { kind: 'sector', label: 'Sector de cerc' },
-      { kind: 'annulus', label: 'Coroană circulară' },
+      { kind: 'sector', label: 'Sector' },
+      { kind: 'annulus', label: 'Coroană circ.' },
+      { kind: 'ellipse', label: 'Elipsă' },
     ],
   },
   {
@@ -121,18 +131,22 @@ export const SHAPE_GROUPS: ShapeGroup[] = [
     shapes: [
       { kind: 'cube', label: 'Cub' },
       { kind: 'cuboid', label: 'Paralelipiped' },
-      { kind: 'prism-tri', label: 'Prismă triunghi.' },
-      { kind: 'prism-hex', label: 'Prismă hexagon.' },
-      { kind: 'pyramid-sq', label: 'Piramidă (pătrat)' },
+      { kind: 'prism-tri', label: 'Prismă △' },
+      { kind: 'prism-sq', label: 'Prismă □' },
+      { kind: 'prism-hex', label: 'Prismă ⬡' },
+      { kind: 'pyramid-tri', label: 'Piramidă △' },
+      { kind: 'pyramid-sq', label: 'Piramidă □' },
+      { kind: 'frustum-pyramid', label: 'Trunchi piramidă' },
       { kind: 'tetrahedron', label: 'Tetraedru' },
       { kind: 'cone', label: 'Con' },
+      { kind: 'frustum-cone', label: 'Trunchi con' },
       { kind: 'cylinder', label: 'Cilindru' },
       { kind: 'sphere', label: 'Sferă' },
     ],
   },
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Geometry helpers ─────────────────────────────────────────────────────────
 
 type Pt = [number, number];
 
@@ -170,7 +184,6 @@ function rightAngleMark(
   dy: number,
   sq: number
 ) {
-  // vertex at (x,y), one side in dx direction, other in dy direction
   ctx.beginPath();
   ctx.moveTo(x + dx * sq, y);
   ctx.lineTo(x + dx * sq, y + dy * sq);
@@ -179,35 +192,38 @@ function rightAngleMark(
 }
 
 // Oblique projection: depth goes upper-right at ~30°
-// (ox, oy) = screen center, lx = local-right, ly = local-down, lz = depth
-const DX = 0.65; // depth x factor
-const DY = 0.38; // depth y factor (negative = up)
+const DX = 0.65;
+const DY = 0.38;
 
 function ob(ox: number, oy: number, lx: number, ly: number, lz: number): Pt {
   return [ox + lx + lz * DX, oy + ly - lz * DY];
 }
 
-// Draw a 3D face (quadrilateral)
 function face3(ctx: CanvasRenderingContext2D, pts: Pt[], dashed = false) {
   if (dashed) ctx.setLineDash([4, 4]);
   poly(ctx, pts);
   if (dashed) ctx.setLineDash([]);
 }
 
+function edge3(ctx: CanvasRenderingContext2D, a: Pt, b: Pt, dashed = false) {
+  if (dashed) ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(a[0], a[1]);
+  ctx.lineTo(b[0], b[1]);
+  ctx.stroke();
+  if (dashed) ctx.setLineDash([]);
+}
+
 // ─── Decoration colour tokens ─────────────────────────────────────────────────
 
-const DEC_HEIGHT = '#dc2626'; // red   — altitudini / înălțimi
+const DEC_HEIGHT = '#dc2626'; // red   — altitudini
 const DEC_ANGLE = '#d97706'; // amber — unghiuri
-const DEC_LABEL = '#0f172a'; // dark  — etichete principale
-const DEC_DIAG = '#16a34a'; // green — diagonale / linii mijlocii
+const DEC_LABEL = '#0f172a'; // dark  — etichete
+const DEC_DIAG = '#16a34a'; // green — diagonale
 
-// ─── Decoration drawing helpers ───────────────────────────────────────────────
+// ─── Decoration helpers ───────────────────────────────────────────────────────
 
-/**
- * Draw a dashed red line from (x1,y1) to (x2,y2) — represents an altitude.
- * Also draws the right-angle mark at the foot (x2,y2).
- * dx/dy: unit direction away from the base along which the mark arms go.
- */
+/** Dashed red altitude line with right-angle mark at foot */
 function decHeight(
   ctx: CanvasRenderingContext2D,
   ax: number,
@@ -233,9 +249,7 @@ function decHeight(
   ctx.restore();
 }
 
-/**
- * Draw an angle arc (amber) centred at (vx, vy) from angle a1 to a2 (radians).
- */
+/** Amber angle arc */
 function decAngle(
   ctx: CanvasRenderingContext2D,
   vx: number,
@@ -256,9 +270,7 @@ function decAngle(
   ctx.restore();
 }
 
-/**
- * Draw a dimension label in italic serif.
- */
+/** Italic serif dimension label (a, b, h, R, …) */
 function decLabel(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -277,9 +289,37 @@ function decLabel(
   ctx.restore();
 }
 
-/**
- * Draw a dashed green line — represents a diagonal or midline.
- */
+/** Bold vertex label (A, B, V, O, …) */
+function decVertex(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  fv: number,
+  color = DEC_LABEL
+) {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.font = `bold ${fv}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.setLineDash([]);
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+/** Filled red dot at a point (for centre O, apex, etc.) */
+function decDot(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  ctx.save();
+  ctx.fillStyle = DEC_HEIGHT;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/** Dashed green diagonal/midline */
 function decDiag(
   ctx: CanvasRenderingContext2D,
   x1: number,
@@ -298,6 +338,49 @@ function decDiag(
   ctx.lineTo(x2, y2);
   ctx.stroke();
   ctx.setLineDash([]);
+  ctx.restore();
+}
+
+/** Dashed red axis line (for 3D solids, no right-angle mark) */
+function decAxis(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  lw: number
+) {
+  ctx.save();
+  ctx.strokeStyle = DEC_HEIGHT;
+  ctx.lineWidth = Math.max(0.8, lw * 0.65);
+  ctx.lineCap = 'round';
+  ctx.setLineDash([Math.max(4, lw * 2), Math.max(3, lw * 1.5)]);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+/** Solid red line (for radius, diameter) */
+function decRed(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  lw: number
+) {
+  ctx.save();
+  ctx.strokeStyle = DEC_HEIGHT;
+  ctx.lineWidth = Math.max(0.8, lw * 0.65);
+  ctx.lineCap = 'round';
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -329,11 +412,13 @@ export function drawGeom(
   const hw = (R - L) / 2,
     hh = (B - T) / 2;
   const r = Math.min(hw, hh);
-  const sq = Math.max(4, lw * 4); // right-angle mark size
-  const fs = Math.max(8, Math.min(hw, hh) * 0.18); // font size proportional to shape
+  const sq = Math.max(4, lw * 4);
+  const fs = Math.max(8, Math.min(hw, hh) * 0.18); // dimension label size
+  const fv = Math.max(7, fs * 1.0); // vertex label size
+  const vs = Math.max(5, fv * 1.2); // offset from vertex
 
   switch (kind) {
-    // ── LINII & UNGHIURI ────────────────────────────────────────────────────────
+    // ── LINII & UNGHIURI ──────────────────────────────────────────────────────
 
     case 'segment':
       ctx.beginPath();
@@ -347,9 +432,9 @@ export function drawGeom(
       ctx.lineTo(R, cy + sq * 1.2);
       ctx.stroke();
       if (style?.labels) {
-        decLabel(ctx, 'A', L, cy - sq * 2, color, fs);
-        decLabel(ctx, 'B', R, cy - sq * 2, color, fs);
-        decLabel(ctx, 'l', cx, cy - sq * 1.5, DEC_LABEL, fs);
+        decVertex(ctx, 'A', L, cy - vs * 2, fv);
+        decVertex(ctx, 'B', R, cy - vs * 2, fv);
+        decLabel(ctx, 'l', cx, cy - vs * 1.5, DEC_LABEL, fs);
       }
       break;
 
@@ -364,8 +449,8 @@ export function drawGeom(
       ctx.lineTo(L, cy + sq * 1.2);
       ctx.stroke();
       if (style?.labels) {
-        decLabel(ctx, 'O', L, cy - sq * 2, color, fs);
-        decLabel(ctx, 'A', R, cy - sq * 2, color, fs);
+        decVertex(ctx, 'O', L, cy - vs * 2, fv);
+        decVertex(ctx, 'A', R, cy - vs * 2, fv);
       }
       break;
 
@@ -386,39 +471,33 @@ export function drawGeom(
       ctx.stroke();
       if (style?.labels) {
         decLabel(ctx, 'α', L + arm * 0.38, B - arm * 0.16, DEC_ANGLE, fs);
+        decVertex(ctx, 'O', L - vs, B + vs * 0.5, fv);
       }
       break;
     }
 
-    // ── TRIUNGHIURI ─────────────────────────────────────────────────────────────
+    // ── TRIUNGHIURI ───────────────────────────────────────────────────────────
 
     case 'tri-right': {
+      // A(L,B) right-angle, B(R,B) bottom-right, C(L,T) top-left
       poly(ctx, [
         [L, B],
         [R, B],
         [L, T],
       ]);
       rightAngleMark(ctx, L, B, 1, -1, sq);
-      // Decorations
       if (style?.height) {
-        // Altitude from right-angle vertex A(L,B) to hypotenuse (L,T)-(R,B)
-        const dx = R - L,
-          dy = B - T;
-        const len2 = dx * dx + dy * dy;
-        const t = ((L - L) * dx + (B - B) * dy) / len2; // t=0 at A projected onto hyp
-        // Foot of altitude from A(L,B) onto BC where B=(R,B), C=(L,T)
-        const bx = R,
-          by = B,
-          cx2 = L,
-          cy2 = T;
-        const ddx = cx2 - bx,
-          ddy = cy2 - by;
-        const ll2 = ddx * ddx + ddy * ddy;
-        const tt = ((L - bx) * ddx + (B - by) * ddy) / ll2;
-        const footX = bx + tt * ddx,
-          footY = by + tt * ddy;
+        const bxh = R,
+          byh = B,
+          cxh = L,
+          cyh = T;
+        const ddx = cxh - bxh,
+          ddy = cyh - byh,
+          ll2 = ddx * ddx + ddy * ddy;
+        const tt = ((L - bxh) * ddx + (B - byh) * ddy) / ll2;
+        const footX = bxh + tt * ddx,
+          footY = byh + tt * ddy;
         const rot = Math.atan2(ddy, ddx);
-        // Draw altitude
         ctx.save();
         ctx.strokeStyle = DEC_HEIGHT;
         ctx.lineWidth = Math.max(0.8, lw * 0.65);
@@ -428,90 +507,97 @@ export function drawGeom(
         ctx.lineTo(footX, footY);
         ctx.stroke();
         ctx.setLineDash([]);
-        // Rotated right-angle mark at foot
         const sq2 = Math.max(3, sq * 0.7);
-        const nx = Math.cos(rot + Math.PI / 2) * sq2;
-        const ny = Math.sin(rot + Math.PI / 2) * sq2;
-        const ex2 = Math.cos(rot) * sq2;
-        const ey2 = Math.sin(rot) * sq2;
+        const nx = Math.cos(rot + Math.PI / 2) * sq2,
+          ny = Math.sin(rot + Math.PI / 2) * sq2;
+        const ex2 = Math.cos(rot) * sq2,
+          ey2 = Math.sin(rot) * sq2;
         ctx.beginPath();
         ctx.moveTo(footX + nx, footY + ny);
         ctx.lineTo(footX + nx + ex2, footY + ny + ey2);
         ctx.lineTo(footX + ex2, footY + ey2);
         ctx.stroke();
         ctx.restore();
-        if (style?.labels) {
-          const mx = (L + footX) / 2,
-            my = (B + footY) / 2;
-          decLabel(ctx, 'h', mx - fs * 0.9, my, DEC_HEIGHT, fs);
-        }
-        void t; // suppress unused warning
+        if (style?.labels)
+          decLabel(ctx, 'h', (L + footX) / 2 - fs, (B + footY) / 2, DEC_HEIGHT, fs);
+      }
+      if (style?.angle) {
+        decAngle(ctx, R, B, r * 0.28, Math.PI, Math.PI + Math.PI * 0.4);
+        if (style?.labels) decLabel(ctx, 'u', R - r * 0.32, B - r * 0.14, DEC_ANGLE, fs);
       }
       if (style?.labels) {
-        // c₁ on vertical, c₂ on horizontal, i on hypotenuse
         decLabel(ctx, 'c₁', L - fs * 1.0, cy, DEC_DIAG, fs);
         decLabel(ctx, 'c₂', cx, B + fs * 1.2, DEC_DIAG, fs);
         decLabel(ctx, 'i', cx + fs * 0.9, cy - fs * 0.4, color, fs);
+        decVertex(ctx, 'A', L - vs, B + vs * 0.6, fv);
+        decVertex(ctx, 'B', R + vs, B + vs * 0.6, fv);
+        decVertex(ctx, 'C', L - vs, T - vs * 0.5, fv);
       }
       break;
     }
 
     case 'tri-equilateral': {
-      const h = r * Math.sqrt(3);
+      const hE = r * Math.sqrt(3);
       const ax = cx,
-        ay = cy - (h * 2) / 3;
-      const bx = cx + r,
-        by = cy + h / 3;
-      const ex = cx - r,
-        ey = cy + h / 3;
+        ay = cy - (hE * 2) / 3;
+      const bxE = cx + r,
+        byE = cy + hE / 3;
+      const exE = cx - r,
+        eyE = cy + hE / 3;
       poly(ctx, [
         [ax, ay],
-        [bx, by],
-        [ex, ey],
+        [bxE, byE],
+        [exE, eyE],
       ]);
       if (style?.height) {
-        decHeight(ctx, ax, ay, cx, by, lw, sq, 1, -1);
-        if (style?.labels) decLabel(ctx, 'h', cx + fs * 0.9, (ay + by) / 2, DEC_HEIGHT, fs);
+        decHeight(ctx, ax, ay, cx, byE, lw, sq, 1, -1);
+        if (style?.labels) decLabel(ctx, 'h', cx + fs * 0.9, (ay + byE) / 2, DEC_HEIGHT, fs);
       }
       if (style?.angle) {
-        decAngle(ctx, bx, by, r * 0.28, Math.PI + 0.35, Math.PI + Math.PI / 3 - 0.1);
-        if (style?.labels) decLabel(ctx, '60°', bx - r * 0.38, by - r * 0.18, DEC_ANGLE, fs * 0.85);
+        decAngle(ctx, bxE, byE, r * 0.28, Math.PI + 0.35, Math.PI + Math.PI / 3 - 0.1);
+        if (style?.labels)
+          decLabel(ctx, '60°', bxE - r * 0.38, byE - r * 0.18, DEC_ANGLE, fs * 0.85);
       }
       if (style?.labels) {
-        decLabel(ctx, 'l', (ax + ex) / 2 - fs * 0.8, (ay + ey) / 2, color, fs);
-        decLabel(ctx, 'l', (ax + bx) / 2 + fs * 0.8, (ay + by) / 2, color, fs);
-        decLabel(ctx, 'l', cx, by + fs * 1.2, color, fs);
+        decLabel(ctx, 'l', (ax + exE) / 2 - fs * 0.8, (ay + eyE) / 2, color, fs);
+        decLabel(ctx, 'l', (ax + bxE) / 2 + fs * 0.8, (ay + byE) / 2, color, fs);
+        decLabel(ctx, 'l', cx, byE + fs * 1.2, color, fs);
+        decVertex(ctx, 'A', ax, ay - vs, fv);
+        decVertex(ctx, 'B', bxE + vs, byE + vs * 0.5, fv);
+        decVertex(ctx, 'C', exE - vs, eyE + vs * 0.5, fv);
       }
       break;
     }
 
     case 'tri-isosceles': {
       const ax = cx,
-        ay = T;
-      const bx = R,
-        by = B;
-      const ex = L,
-        ey = B;
+        ay = T,
+        bxI = R,
+        byI = B,
+        exI = L,
+        eyI = B;
       poly(ctx, [
         [ax, ay],
-        [bx, by],
-        [ex, ey],
+        [bxI, byI],
+        [exI, eyI],
       ]);
       if (style?.height) {
         decHeight(ctx, ax, ay, cx, B, lw, sq, 1, -1);
         if (style?.labels) decLabel(ctx, 'h', cx + fs * 0.9, cy, DEC_HEIGHT, fs);
       }
       if (style?.angle) {
-        // angle at B (bottom-right)
-        const a1 = Math.atan2(ay - by, ax - bx);
-        const a2 = Math.atan2(ey - by, ex - bx);
-        decAngle(ctx, bx, by, r * 0.3, a2, a1);
-        if (style?.labels) decLabel(ctx, 'u', bx - r * 0.38, by - r * 0.16, DEC_ANGLE, fs);
+        const a1 = Math.atan2(ay - byI, ax - bxI);
+        const a2 = Math.atan2(eyI - byI, exI - bxI);
+        decAngle(ctx, bxI, byI, r * 0.3, a2, a1);
+        if (style?.labels) decLabel(ctx, 'u', bxI - r * 0.38, byI - r * 0.16, DEC_ANGLE, fs);
       }
       if (style?.labels) {
-        decLabel(ctx, 'l', (ax + ex) / 2 - fs * 0.9, (ay + ey) / 2, color, fs);
-        decLabel(ctx, 'l', (ax + bx) / 2 + fs * 0.9, (ay + by) / 2, color, fs);
+        decLabel(ctx, 'l', (ax + exI) / 2 - fs * 0.9, (ay + eyI) / 2, color, fs);
+        decLabel(ctx, 'l', (ax + bxI) / 2 + fs * 0.9, (ay + byI) / 2, color, fs);
         decLabel(ctx, 'b', cx, B + fs * 1.2, color, fs);
+        decVertex(ctx, 'A', ax, ay - vs, fv);
+        decVertex(ctx, 'B', bxI + vs, byI + vs * 0.5, fv);
+        decVertex(ctx, 'C', exI - vs, eyI + vs * 0.5, fv);
       }
       break;
     }
@@ -528,7 +614,6 @@ export function drawGeom(
         if (style?.labels) decLabel(ctx, 'h', apexX + fs * 0.9, cy, DEC_HEIGHT, fs);
       }
       if (style?.angle) {
-        // angle at B (bottom-right)
         const a1 = Math.atan2(T - B, apexX - R);
         const a2 = Math.atan2(B - B, L - R);
         decAngle(ctx, R, B, r * 0.28, a2, a1);
@@ -538,13 +623,51 @@ export function drawGeom(
         decLabel(ctx, 'a', (L + apexX) / 2 - fs * 0.9, (B + T) / 2, color, fs);
         decLabel(ctx, 'c', (R + apexX) / 2 + fs * 0.9, (B + T) / 2, color, fs);
         decLabel(ctx, 'b', cx, B + fs * 1.2, color, fs);
+        decVertex(ctx, 'A', apexX, T - vs, fv);
+        decVertex(ctx, 'B', R + vs, B + vs * 0.5, fv);
+        decVertex(ctx, 'C', L - vs, B + vs * 0.5, fv);
       }
       break;
     }
 
-    // ── PATRULATER ──────────────────────────────────────────────────────────────
+    // ── PATRULATER ────────────────────────────────────────────────────────────
+
+    case 'square-geom': {
+      ctx.strokeRect(L, T, R - L, B - T);
+      if (style?.diagonal) {
+        decDiag(ctx, L, T, R, B, lw);
+        if (style?.labels) decLabel(ctx, 'd', cx + fs * 0.9, cy - fs * 0.9, DEC_DIAG, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'l', cx, B + fs * 1.2, color, fs);
+        decLabel(ctx, 'l', L - fs * 1.1, cy, color, fs);
+        decVertex(ctx, 'D', L - vs, T - vs * 0.5, fv);
+        decVertex(ctx, 'C', R + vs, T - vs * 0.5, fv);
+        decVertex(ctx, 'B', R + vs, B + vs * 0.5, fv);
+        decVertex(ctx, 'A', L - vs, B + vs * 0.5, fv);
+      }
+      break;
+    }
+
+    case 'rect-geom': {
+      ctx.strokeRect(L, T, R - L, B - T);
+      if (style?.diagonal) {
+        decDiag(ctx, L, T, R, B, lw);
+        if (style?.labels) decLabel(ctx, 'd', cx + fs * 0.9, cy - fs * 0.9, DEC_DIAG, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'L', cx, B + fs * 1.2, color, fs);
+        decLabel(ctx, 'l', L - fs * 1.1, cy, color, fs);
+        decVertex(ctx, 'D', L - vs, T - vs * 0.5, fv);
+        decVertex(ctx, 'C', R + vs, T - vs * 0.5, fv);
+        decVertex(ctx, 'B', R + vs, B + vs * 0.5, fv);
+        decVertex(ctx, 'A', L - vs, B + vs * 0.5, fv);
+      }
+      break;
+    }
 
     case 'rhombus': {
+      // A(top) B(right) C(bottom) D(left)
       poly(ctx, [
         [cx, T],
         [R, cy],
@@ -554,7 +677,6 @@ export function drawGeom(
       if (style?.diagonal) {
         decDiag(ctx, cx, T, cx, B, lw);
         decDiag(ctx, L, cy, R, cy, lw);
-        // right-angle at centre
         ctx.save();
         ctx.strokeStyle = DEC_HEIGHT;
         ctx.lineWidth = Math.max(0.8, lw * 0.65);
@@ -564,6 +686,10 @@ export function drawGeom(
         ctx.lineTo(cx + sq * 0.6, cy);
         ctx.stroke();
         ctx.restore();
+        if (style?.labels) {
+          decLabel(ctx, 'd₁', cx + fs * 1.0, (T + cy) / 2, DEC_DIAG, fs);
+          decLabel(ctx, 'd₂', (cx + R) / 2, cy - fs * 1.0, DEC_DIAG, fs);
+        }
       }
       if (style?.angle) {
         decAngle(ctx, R, cy, r * 0.28, Math.PI * 0.6, Math.PI * 1.4);
@@ -571,15 +697,16 @@ export function drawGeom(
       }
       if (style?.labels) {
         decLabel(ctx, 'l', (cx + L) / 2 - fs * 0.6, (cy + T) / 2, color, fs);
-        if (style?.diagonal) {
-          decLabel(ctx, 'd₁', cx + fs * 1.0, (T + cy) / 2, DEC_DIAG, fs);
-          decLabel(ctx, 'd₂', (cx + R) / 2, cy - fs * 1.0, DEC_DIAG, fs);
-        }
+        decVertex(ctx, 'A', cx, T - vs * 0.7, fv);
+        decVertex(ctx, 'B', R + vs, cy, fv);
+        decVertex(ctx, 'C', cx, B + vs * 0.7, fv);
+        decVertex(ctx, 'D', L - vs, cy, fv);
       }
       break;
     }
 
     case 'parallelogram': {
+      // D(L+sk,T) C(R,T) B(R-sk,B) A(L,B)
       const sk = hw * 0.3;
       poly(ctx, [
         [L + sk, T],
@@ -588,7 +715,6 @@ export function drawGeom(
         [L, B],
       ]);
       if (style?.height) {
-        // Height from top-left vertex (L+sk, T) down to base
         decHeight(ctx, L + sk, T, L + sk, B, lw, sq, 1, -1);
         if (style?.labels) decLabel(ctx, 'h', L + sk + fs * 0.9, cy, DEC_HEIGHT, fs);
       }
@@ -600,6 +726,10 @@ export function drawGeom(
       if (style?.labels) {
         decLabel(ctx, 'b', cx, B + fs * 1.2, color, fs);
         decLabel(ctx, 'a', L + fs * 0.2, cy, color, fs);
+        decVertex(ctx, 'D', L + sk - vs * 0.5, T - vs * 0.6, fv);
+        decVertex(ctx, 'C', R + vs, T - vs * 0.6, fv);
+        decVertex(ctx, 'B', R - sk + vs * 0.5, B + vs * 0.6, fv);
+        decVertex(ctx, 'A', L - vs, B + vs * 0.6, fv);
       }
       break;
     }
@@ -619,7 +749,6 @@ export function drawGeom(
         if (style?.labels) decLabel(ctx, 'h', topL + fs * 0.9, cy, DEC_HEIGHT, fs);
       }
       if (style?.diagonal) {
-        // Midline
         const mlL = (L + topL) / 2,
           mlR = (R + topR) / 2;
         decDiag(ctx, mlL, cy, mlR, cy, lw);
@@ -628,6 +757,10 @@ export function drawGeom(
       if (style?.labels) {
         decLabel(ctx, 'B', cx, B + fs * 1.2, color, fs);
         decLabel(ctx, 'b', (topL + topR) / 2, T - fs * 1.1, color, fs);
+        decVertex(ctx, 'D', topL - vs * 0.5, T - vs * 0.6, fv);
+        decVertex(ctx, 'C', topR + vs * 0.5, T - vs * 0.6, fv);
+        decVertex(ctx, 'B', R + vs, B + vs * 0.6, fv);
+        decVertex(ctx, 'A', L - vs, B + vs * 0.6, fv);
       }
       break;
     }
@@ -649,6 +782,10 @@ export function drawGeom(
       if (style?.labels) {
         decLabel(ctx, 'B', cx, B + fs * 1.2, color, fs);
         decLabel(ctx, 'b', (L + R - ins) / 2, T - fs * 1.1, color, fs);
+        decVertex(ctx, 'D', L - vs, T - vs * 0.6, fv);
+        decVertex(ctx, 'C', R - ins + vs, T - vs * 0.6, fv);
+        decVertex(ctx, 'B', R + vs, B + vs * 0.6, fv);
+        decVertex(ctx, 'A', L - vs, B + vs * 0.6, fv);
       }
       break;
     }
@@ -662,7 +799,6 @@ export function drawGeom(
         [L, B],
       ]);
       if (style?.height) {
-        // Height from midpoint of top base to bottom
         decHeight(ctx, cx, T, cx, B, lw, sq, 1, -1);
         if (style?.labels) decLabel(ctx, 'h', cx + fs * 0.9, cy, DEC_HEIGHT, fs);
       }
@@ -675,20 +811,56 @@ export function drawGeom(
       if (style?.labels) {
         decLabel(ctx, 'B', cx, B + fs * 1.2, color, fs);
         decLabel(ctx, 'b', cx, T - fs * 1.1, color, fs);
+        decVertex(ctx, 'D', L + ins - vs * 0.5, T - vs * 0.6, fv);
+        decVertex(ctx, 'C', R - ins + vs * 0.5, T - vs * 0.6, fv);
+        decVertex(ctx, 'B', R + vs, B + vs * 0.6, fv);
+        decVertex(ctx, 'A', L - vs, B + vs * 0.6, fv);
       }
       break;
     }
 
-    // ── POLIGOANE REGULATE ──────────────────────────────────────────────────────
+    // ── POLIGOANE REGULATE ────────────────────────────────────────────────────
 
-    case 'pentagon':
-      poly(ctx, regularPts(5, cx, cy, r, -Math.PI / 2));
-      if (style?.labels) decLabel(ctx, 'l', cx + r + fs, cy, color, fs);
+    case 'pentagon': {
+      const pts5 = regularPts(5, cx, cy, r, -Math.PI / 2);
+      poly(ctx, pts5);
+      if (style?.labels) {
+        decLabel(ctx, 'l', cx + r + fs, cy, color, fs);
+        ['A', 'B', 'C', 'D', 'E'].forEach((lbl, i) => {
+          const [px, py] = pts5[i];
+          const ox = (px - cx) * 0.22,
+            oy = (py - cy) * 0.22;
+          decVertex(
+            ctx,
+            lbl,
+            px + ox + Math.sign(ox) * vs * 0.4,
+            py + oy + Math.sign(oy) * vs * 0.4,
+            fv * 0.9
+          );
+        });
+      }
       break;
-    case 'hexagon':
-      poly(ctx, regularPts(6, cx, cy, r, 0));
-      if (style?.labels) decLabel(ctx, 'l', cx + r + fs, cy, color, fs);
+    }
+    case 'hexagon': {
+      const pts6 = regularPts(6, cx, cy, r, 0);
+      poly(ctx, pts6);
+      if (style?.labels) {
+        decLabel(ctx, 'l', cx + r + fs, cy, color, fs);
+        ['A', 'B', 'C', 'D', 'E', 'F'].forEach((lbl, i) => {
+          const [px, py] = pts6[i];
+          const ox = (px - cx) * 0.22,
+            oy = (py - cy) * 0.22;
+          decVertex(
+            ctx,
+            lbl,
+            px + ox + Math.sign(ox) * vs * 0.4,
+            py + oy + Math.sign(oy) * vs * 0.4,
+            fv * 0.9
+          );
+        });
+      }
       break;
+    }
     case 'heptagon':
       poly(ctx, regularPts(7, cx, cy, r, -Math.PI / 2));
       if (style?.labels) decLabel(ctx, 'l', cx + r + fs, cy, color, fs);
@@ -698,22 +870,30 @@ export function drawGeom(
       if (style?.labels) decLabel(ctx, 'l', cx + r + fs, cy, color, fs);
       break;
 
-    // ── CERCURI ─────────────────────────────────────────────────────────────────
+    // ── CERCURI & CONICE ──────────────────────────────────────────────────────
+
+    case 'circle-geom': {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.stroke();
+      if (style?.labels) {
+        // dashed diameter A-O-B
+        decAxis(ctx, cx - r, cy, cx + r, cy, lw);
+        decDot(ctx, cx, cy, Math.max(2, lw * 1.5));
+        decVertex(ctx, 'O', cx, cy - vs * 0.9, fv);
+        decVertex(ctx, 'A', cx - r - vs, cy, fv);
+        decVertex(ctx, 'B', cx + r + vs, cy, fv);
+        decLabel(ctx, 'R', cx + r / 2, cy - fs * 1.0, DEC_HEIGHT, fs);
+      }
+      break;
+    }
 
     case 'arc':
       ctx.beginPath();
       ctx.arc(cx, cy, r, Math.PI * 0.75, Math.PI * 2.25);
       ctx.stroke();
       if (style?.labels) {
-        // Radius line
-        ctx.save();
-        ctx.strokeStyle = DEC_HEIGHT;
-        ctx.lineWidth = Math.max(0.8, lw * 0.65);
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(cx + r, cy);
-        ctx.stroke();
-        ctx.restore();
+        decRed(ctx, cx, cy, cx + r, cy, lw);
         decLabel(ctx, 'R', cx + r / 2, cy - fs * 1.0, DEC_HEIGHT, fs);
       }
       break;
@@ -729,7 +909,9 @@ export function drawGeom(
         if (style?.labels) decLabel(ctx, 'α', cx + r * 0.18, cy - r * 0.14, DEC_ANGLE, fs);
       }
       if (style?.labels) {
+        decDot(ctx, cx, cy, Math.max(2, lw * 1.5));
         decLabel(ctx, 'R', cx + r * 0.54, cy - r * 0.54, DEC_HEIGHT, fs);
+        decVertex(ctx, 'O', cx - vs, cy + vs * 0.4, fv);
       }
       break;
 
@@ -741,53 +923,76 @@ export function drawGeom(
       ctx.arc(cx, cy, r * 0.52, 0, Math.PI * 2);
       ctx.stroke();
       if (style?.labels) {
+        decDot(ctx, cx, cy, Math.max(2, lw * 1.5));
         decLabel(ctx, 'R', cx + (r + r * 0.52) / 2, cy - fs * 0.8, DEC_HEIGHT, fs);
         decLabel(ctx, 'r', cx + r * 0.26, cy - fs * 0.8, DEC_LABEL, fs);
+        decVertex(ctx, 'O', cx - vs * 0.6, cy - vs * 0.6, fv);
       }
       break;
 
-    // ── GEOMETRIE ÎN SPAȚIU ─────────────────────────────────────────────────────
+    case 'ellipse': {
+      // a = semi-major (horizontal), b = semi-minor (vertical)
+      const a = hw * 0.9,
+        b = hh * 0.75;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, a, b, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      if (style?.labels) {
+        // semi-axes
+        decRed(ctx, cx, cy, cx + a, cy, lw);
+        decRed(ctx, cx, cy, cx, cy - b, lw);
+        decDot(ctx, cx, cy, Math.max(2, lw * 1.5));
+        decLabel(ctx, 'a', cx + a / 2, cy + fs * 1.1, DEC_HEIGHT, fs);
+        decLabel(ctx, 'b', cx - fs * 1.1, cy - b / 2, DEC_HEIGHT, fs);
+        decVertex(ctx, 'O', cx, cy + vs * 0.7, fv);
+        decVertex(ctx, 'A', cx - a - vs, cy, fv);
+        decVertex(ctx, 'B', cx + a + vs, cy, fv);
+        decVertex(ctx, 'C', cx, cy - b - vs * 0.6, fv);
+        decVertex(ctx, 'D', cx, cy + b + vs * 0.6, fv);
+      }
+      break;
+    }
+
+    // ── GEOMETRIE ÎN SPAȚIU ───────────────────────────────────────────────────
 
     case 'cube': {
       const s = r * 0.78;
-      // front face
-      const fl: Pt = ob(cx, cy, -s, s, 0);
-      const fr: Pt = ob(cx, cy, s, s, 0);
-      const tr: Pt = ob(cx, cy, s, -s, 0);
-      const tl: Pt = ob(cx, cy, -s, -s, 0);
-      // back face (same + depth offset)
-      const fl2: Pt = ob(cx, cy, -s, s, s * 2);
-      const fr2: Pt = ob(cx, cy, s, s, s * 2);
-      const tr2: Pt = ob(cx, cy, s, -s, s * 2);
-      const tl2: Pt = ob(cx, cy, -s, -s, s * 2);
-      // visible faces
-      face3(ctx, [tl, tr, tr2, tl2]); // top
-      face3(ctx, [tr, fr, fr2, tr2]); // right
-      face3(ctx, [fl, fr, tr, tl]); // front
-      // hidden edges dashed
-      face3(ctx, [fl, fl2, fr2, fr], true);
-      face3(ctx, [tl2, fl2], false); // single line hidden
+      // Convention: ABCD = bottom, A'B'C'D' = top
+      // A=fl(front-left-bottom), B=fr, A'=tl, B'=tr
+      // C=fr2(back-right), D=fl2(back-left), C'=tr2, D'=tl2
+      const A: Pt = ob(cx, cy, -s, s, 0);
+      const B: Pt = ob(cx, cy, s, s, 0);
+      const Ap: Pt = ob(cx, cy, -s, -s, 0);
+      const Bp: Pt = ob(cx, cy, s, -s, 0);
+      const D: Pt = ob(cx, cy, -s, s, s * 2);
+      const Cv: Pt = ob(cx, cy, s, s, s * 2);
+      const Dp: Pt = ob(cx, cy, -s, -s, s * 2);
+      const Cp: Pt = ob(cx, cy, s, -s, s * 2);
+      // top, right, front faces
+      face3(ctx, [Ap, Bp, Cp, Dp]);
+      face3(ctx, [B, Cv, Cp, Bp]);
+      face3(ctx, [A, B, Bp, Ap]);
+      // hidden edges
       ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(fl2[0], fl2[1]);
-      ctx.lineTo(tl2[0], tl2[1]);
-      ctx.stroke();
+      edge3(ctx, A, D);
+      edge3(ctx, D, Cv);
+      edge3(ctx, D, Dp);
       ctx.setLineDash([]);
-      if (style?.labels) {
-        decLabel(ctx, 'l', (fl[0] + fr[0]) / 2, fl[1] + fs * 1.2, color, fs);
-        decLabel(ctx, 'l', fl[0] - fs * 1.0, (fl[1] + tl[1]) / 2, color, fs);
-        decLabel(ctx, 'l', (fr[0] + fr2[0]) / 2 + fs * 0.9, (fr[1] + fr2[1]) / 2, color, fs);
-      }
       if (style?.height) {
-        // Vertical edge as height indicator
-        ctx.save();
-        ctx.strokeStyle = DEC_HEIGHT;
-        ctx.lineWidth = Math.max(0.8, lw * 0.65);
-        ctx.beginPath();
-        ctx.moveTo(fr2[0], fr2[1]);
-        ctx.lineTo(fl2[0], fl2[1]);
-        ctx.stroke();
-        ctx.restore();
+        // Space diagonals in red
+        decAxis(ctx, A[0], A[1], Cp[0], Cp[1], lw);
+        decAxis(ctx, B[0], B[1], Dp[0], Dp[1], lw);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'l', (A[0] + B[0]) / 2, A[1] + fs * 1.2, color, fs);
+        decVertex(ctx, 'A', A[0] - vs, A[1] + vs * 0.5, fv);
+        decVertex(ctx, 'B', B[0] + vs, B[1] + vs * 0.5, fv);
+        decVertex(ctx, 'A′', Ap[0] - vs, Ap[1] - vs * 0.5, fv);
+        decVertex(ctx, 'B′', Bp[0] + vs, Bp[1] - vs * 0.5, fv);
+        decVertex(ctx, 'C′', Cp[0] + vs, Cp[1] - vs * 0.5, fv);
+        decVertex(ctx, 'D′', Dp[0] - vs, Dp[1] - vs * 0.5, fv);
+        decVertex(ctx, 'C', Cv[0] + vs, Cv[1] + vs * 0.5, fv, '#94a3b8');
+        decVertex(ctx, 'D', D[0] - vs, D[1] + vs * 0.5, fv, '#94a3b8');
       }
       break;
     }
@@ -796,222 +1001,417 @@ export function drawGeom(
       const sw = hw * 0.72,
         sh = hh * 0.68;
       const sd = Math.min(sw, sh) * 0.9;
-      const fl: Pt = ob(cx, cy, -sw, sh, 0);
-      const fr: Pt = ob(cx, cy, sw, sh, 0);
-      const tr: Pt = ob(cx, cy, sw, -sh, 0);
-      const tl: Pt = ob(cx, cy, -sw, -sh, 0);
-      const fl2: Pt = ob(cx, cy, -sw, sh, sd * 2);
-      const fr2: Pt = ob(cx, cy, sw, sh, sd * 2);
-      const tr2: Pt = ob(cx, cy, sw, -sh, sd * 2);
-      const tl2: Pt = ob(cx, cy, -sw, -sh, sd * 2);
-      face3(ctx, [tl, tr, tr2, tl2]);
-      face3(ctx, [tr, fr, fr2, tr2]);
-      face3(ctx, [fl, fr, tr, tl]);
+      const A: Pt = ob(cx, cy, -sw, sh, 0);
+      const B: Pt = ob(cx, cy, sw, sh, 0);
+      const Ap: Pt = ob(cx, cy, -sw, -sh, 0);
+      const Bp: Pt = ob(cx, cy, sw, -sh, 0);
+      const D: Pt = ob(cx, cy, -sw, sh, sd * 2);
+      const Cv: Pt = ob(cx, cy, sw, sh, sd * 2);
+      const Dp: Pt = ob(cx, cy, -sw, -sh, sd * 2);
+      const Cp: Pt = ob(cx, cy, sw, -sh, sd * 2);
+      face3(ctx, [Ap, Bp, Cp, Dp]);
+      face3(ctx, [B, Cv, Cp, Bp]);
+      face3(ctx, [A, B, Bp, Ap]);
       ctx.setLineDash([4, 4]);
-      face3(ctx, [fl, fl2, fr2, fr]);
-      ctx.beginPath();
-      ctx.moveTo(fl2[0], fl2[1]);
-      ctx.lineTo(tl2[0], tl2[1]);
-      ctx.stroke();
+      edge3(ctx, A, D);
+      edge3(ctx, D, Cv);
+      edge3(ctx, D, Dp);
       ctx.setLineDash([]);
-      if (style?.labels) {
-        decLabel(ctx, 'a', (fl[0] + fr[0]) / 2, fl[1] + fs * 1.2, color, fs);
-        decLabel(ctx, 'b', fl[0] - fs * 1.0, (fl[1] + tl[1]) / 2, color, fs);
-        decLabel(ctx, 'h', (fr[0] + tr[0]) / 2 + fs * 1.0, (fr[1] + tr[1]) / 2, DEC_HEIGHT, fs);
-      }
       if (style?.height) {
-        // Height edge
-        decDiag(ctx, tr[0], tr[1], fr[0], fr[1], lw);
+        decAxis(ctx, A[0], A[1], Cp[0], Cp[1], lw); // space diagonal
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'a', (A[0] + B[0]) / 2, A[1] + fs * 1.2, color, fs);
+        decLabel(ctx, 'b', A[0] - fs * 1.0, (A[1] + Ap[1]) / 2, color, fs);
+        decLabel(ctx, 'h', (B[0] + Bp[0]) / 2 + fs * 1.0, (B[1] + Bp[1]) / 2, DEC_HEIGHT, fs);
+        decVertex(ctx, 'A', A[0] - vs, A[1] + vs * 0.5, fv);
+        decVertex(ctx, 'B', B[0] + vs, B[1] + vs * 0.5, fv);
+        decVertex(ctx, 'A′', Ap[0] - vs, Ap[1] - vs * 0.5, fv);
+        decVertex(ctx, 'B′', Bp[0] + vs, Bp[1] - vs * 0.5, fv);
+        decVertex(ctx, 'C′', Cp[0] + vs, Cp[1] - vs * 0.5, fv);
+        decVertex(ctx, 'D′', Dp[0] - vs, Dp[1] - vs * 0.5, fv);
       }
       break;
     }
 
     case 'prism-tri': {
-      const s = r * 0.78;
-      const d = s * 1.4;
+      const s = r * 0.78,
+        d = s * 1.4;
       const A: Pt = ob(cx, cy, 0, -s, 0);
       const BL: Pt = ob(cx, cy, -s, s, 0);
       const BR: Pt = ob(cx, cy, s, s, 0);
-      const A2: Pt = ob(cx, cy, 0, -s, d);
-      const BL2: Pt = ob(cx, cy, -s, s, d);
-      const BR2: Pt = ob(cx, cy, s, s, d);
-      face3(ctx, [A, BR, BL]); // front triangle
-      face3(ctx, [A2, BR2, BL2]); // back triangle
-      face3(ctx, [A, A2, BR2, BR]); // right lateral
-      face3(ctx, [BL, BR, BR2, BL2]); // bottom lateral
+      const Ap: Pt = ob(cx, cy, 0, -s, d);
+      const BLp: Pt = ob(cx, cy, -s, s, d);
+      const BRp: Pt = ob(cx, cy, s, s, d);
+      face3(ctx, [A, BR, BL]);
+      face3(ctx, [A, Ap, BRp, BR]);
+      face3(ctx, [BL, BR, BRp, BLp]);
       ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(A[0], A[1]);
-      ctx.lineTo(A2[0], A2[1]);
-      ctx.moveTo(BL[0], BL[1]);
-      ctx.lineTo(BL2[0], BL2[1]);
-      ctx.stroke();
+      edge3(ctx, A, Ap, false); // visible, not hidden - but Ap is back
+      face3(ctx, [Ap, BRp, BLp]);
+      edge3(ctx, BL, BLp, true);
+      edge3(ctx, A, Ap, true);
       ctx.setLineDash([]);
+      edge3(ctx, BR, BRp);
       if (style?.height) {
-        // Height of lateral face
-        decDiag(ctx, A[0], A[1], (BL[0] + BR[0]) / 2, (BL[1] + BR[1]) / 2, lw);
+        decAxis(ctx, A[0], A[1], (BL[0] + BR[0]) / 2, (BL[1] + BR[1]) / 2, lw);
       }
       if (style?.labels) {
-        decLabel(ctx, 'h', (BR[0] + BR2[0]) / 2 + fs, (BR[1] + BR2[1]) / 2, DEC_HEIGHT, fs);
-        decLabel(ctx, 'Ab', A[0] - fs * 1.5, A[1], color, fs);
+        decLabel(ctx, 'h', (BR[0] + BRp[0]) / 2 + fs, (BR[1] + BRp[1]) / 2, DEC_HEIGHT, fs);
+        decVertex(ctx, 'A', A[0], A[1] - vs * 0.8, fv);
+        decVertex(ctx, 'B', BR[0] + vs, BR[1] + vs * 0.5, fv);
+        decVertex(ctx, 'C', BL[0] - vs, BL[1] + vs * 0.5, fv);
+        decVertex(ctx, 'A′', Ap[0], Ap[1] - vs * 0.8, fv);
+        decVertex(ctx, 'B′', BRp[0] + vs, BRp[1] - vs * 0.5, fv);
+        decVertex(ctx, 'C′', BLp[0] - vs, BLp[1] + vs * 0.5, fv, '#94a3b8');
+      }
+      break;
+    }
+
+    case 'prism-sq': {
+      // Square prism (right prism with square base)
+      const s = r * 0.6,
+        h = r * 1.1;
+      const A: Pt = ob(cx, cy, -s, s, 0);
+      const B: Pt = ob(cx, cy, s, s, 0);
+      const Ap: Pt = ob(cx, cy, -s, -h, 0);
+      const Bp: Pt = ob(cx, cy, s, -h, 0);
+      const D: Pt = ob(cx, cy, -s, s, s * 2);
+      const Cv: Pt = ob(cx, cy, s, s, s * 2);
+      const Dp: Pt = ob(cx, cy, -s, -h, s * 2);
+      const Cp: Pt = ob(cx, cy, s, -h, s * 2);
+      face3(ctx, [Ap, Bp, Cp, Dp]);
+      face3(ctx, [B, Cv, Cp, Bp]);
+      face3(ctx, [A, B, Bp, Ap]);
+      ctx.setLineDash([4, 4]);
+      edge3(ctx, A, D);
+      edge3(ctx, D, Cv);
+      edge3(ctx, D, Dp);
+      ctx.setLineDash([]);
+      if (style?.height) {
+        decAxis(ctx, Bp[0], Bp[1], B[0], B[1], lw);
+        if (style?.labels) decLabel(ctx, 'h', Bp[0] + fs, (Bp[1] + B[1]) / 2, DEC_HEIGHT, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 's', (A[0] + B[0]) / 2, A[1] + fs * 1.2, color, fs);
+        decVertex(ctx, 'A', A[0] - vs, A[1] + vs * 0.5, fv);
+        decVertex(ctx, 'B', B[0] + vs, B[1] + vs * 0.5, fv);
+        decVertex(ctx, 'A′', Ap[0] - vs, Ap[1] - vs * 0.5, fv);
+        decVertex(ctx, 'B′', Bp[0] + vs, Bp[1] - vs * 0.5, fv);
+        decVertex(ctx, 'C′', Cp[0] + vs, Cp[1] - vs * 0.5, fv);
+        decVertex(ctx, 'D′', Dp[0] - vs, Dp[1] - vs * 0.5, fv);
       }
       break;
     }
 
     case 'prism-hex': {
-      const s = r * 0.65;
-      const d = s * 1.2;
+      const s = r * 0.65,
+        d = s * 1.2;
       const front = regularPts(6, 0, 0, s, 0);
       const back = front.map(([x, y]) => ob(cx, cy, x, -y, d));
       const frontS = front.map(([x, y]) => ob(cx, cy, x, -y, 0));
       face3(ctx, frontS);
       face3(ctx, back);
-      // visible lateral edges (right half)
-      for (let i = 0; i <= 3; i++) {
-        ctx.beginPath();
-        ctx.moveTo(frontS[i][0], frontS[i][1]);
-        ctx.lineTo(back[i][0], back[i][1]);
-        ctx.stroke();
-      }
+      for (let i = 0; i <= 3; i++) edge3(ctx, frontS[i], back[i]);
       ctx.setLineDash([4, 4]);
-      for (let i = 4; i < 6; i++) {
-        ctx.beginPath();
-        ctx.moveTo(frontS[i][0], frontS[i][1]);
-        ctx.lineTo(back[i][0], back[i][1]);
-        ctx.stroke();
-      }
+      for (let i = 4; i < 6; i++) edge3(ctx, frontS[i], back[i], true);
       ctx.setLineDash([]);
+      if (style?.labels) {
+        decLabel(ctx, 's', frontS[2][0] + fs, frontS[2][1] + fs, color, fs);
+        decLabel(
+          ctx,
+          'h',
+          (frontS[2][0] + back[2][0]) / 2 + fs,
+          (frontS[2][1] + back[2][1]) / 2,
+          DEC_HEIGHT,
+          fs
+        );
+      }
+      break;
+    }
+
+    case 'pyramid-tri': {
+      // Triangular pyramid (piramidă triunghiulară): equilateral base + apex V
+      const s = r * 0.8,
+        d = s * 1.5,
+        hP = r * 1.05;
+      const A: Pt = ob(cx, cy, 0, s, 0);
+      const B: Pt = ob(cx, cy, s, s, d);
+      const Cv: Pt = ob(cx, cy, -s, s, d);
+      const apex: Pt = [cx, cy - hP];
+      // base triangle (A-B-C)
+      face3(ctx, [A, B, Cv]);
+      // front lateral faces
+      face3(ctx, [A, B, apex]);
+      face3(ctx, [A, Cv, apex], true); // hidden
+      edge3(ctx, B, apex);
+      if (style?.height) {
+        const bCx = (A[0] + B[0] + Cv[0]) / 3;
+        const bCy = (A[1] + B[1] + Cv[1]) / 3;
+        decAxis(ctx, apex[0], apex[1], bCx, bCy, lw);
+        decDot(ctx, bCx, bCy, Math.max(2, lw * 1.5));
+        if (style?.labels) {
+          decLabel(ctx, 'h', apex[0] + fs * 1.2, (apex[1] + bCy) / 2, DEC_HEIGHT, fs);
+          decVertex(ctx, 'O', bCx + vs, bCy, fv);
+        }
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'a', (A[0] + B[0]) / 2, A[1] + fs * 1.2, color, fs);
+        decVertex(ctx, 'V', apex[0], apex[1] - vs * 0.8, fv);
+        decVertex(ctx, 'A', A[0], A[1] + vs * 0.6, fv);
+        decVertex(ctx, 'B', B[0] + vs, B[1] + vs * 0.5, fv);
+        decVertex(ctx, 'C', Cv[0] - vs, Cv[1] + vs * 0.5, fv);
+      }
       break;
     }
 
     case 'pyramid-sq': {
-      const s = r * 0.72;
-      const h = r * 1.1;
-      // base
+      const s = r * 0.72,
+        h = r * 1.1;
       const bl: Pt = ob(cx, cy, -s, s, 0);
       const br: Pt = ob(cx, cy, s, s, 0);
       const br2: Pt = ob(cx, cy, s, s, s * 2);
       const bl2: Pt = ob(cx, cy, -s, s, s * 2);
-      // apex
       const apex: Pt = ob(cx, cy, 0, -h, s);
-      face3(ctx, [bl, br, br2, bl2]); // base
-      face3(ctx, [bl, br, apex]); // front face
-      face3(ctx, [br, br2, apex]); // right face
+      const bCx = (bl[0] + br[0] + br2[0] + bl2[0]) / 4;
+      const bCy = (bl[1] + br[1] + br2[1] + bl2[1]) / 4;
+      // midpoint of front base edge (for apothem M)
+      const mX = (bl[0] + br[0]) / 2,
+        mY = (bl[1] + br[1]) / 2;
+      face3(ctx, [bl, br, br2, bl2]);
+      face3(ctx, [bl, br, apex]);
+      face3(ctx, [br, br2, apex]);
       ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(bl2[0], bl2[1]);
-      ctx.lineTo(apex[0], apex[1]);
-      ctx.moveTo(bl[0], bl[1]);
-      ctx.lineTo(bl2[0], bl2[1]);
-      ctx.stroke();
+      edge3(ctx, bl2, apex, true);
+      edge3(ctx, bl, bl2, true);
       ctx.setLineDash([]);
       face3(ctx, [bl2, br2, apex], true);
       if (style?.height) {
-        // Axis from apex to base centre
-        const baseCx = (bl[0] + br[0] + br2[0] + bl2[0]) / 4;
-        const baseCy = (bl[1] + br[1] + br2[1] + bl2[1]) / 4;
-        decDiag(ctx, apex[0], apex[1], baseCx, baseCy, lw);
-        if (style?.labels)
-          decLabel(ctx, 'h', apex[0] + fs * 1.2, (apex[1] + baseCy) / 2, DEC_HEIGHT, fs);
+        decAxis(ctx, apex[0], apex[1], bCx, bCy, lw);
+        decDot(ctx, bCx, bCy, Math.max(2, lw * 1.5));
+        if (style?.labels) {
+          decLabel(ctx, 'h', apex[0] + fs * 1.2, (apex[1] + bCy) / 2, DEC_HEIGHT, fs);
+          // Apothem O→M
+          decAxis(ctx, bCx, bCy, mX, mY, lw);
+          decLabel(ctx, 'ap', (bCx + mX) / 2 + fs, (bCy + mY) / 2, DEC_HEIGHT, fs * 0.85);
+        }
       }
       if (style?.labels) {
         decLabel(ctx, 'a', (bl[0] + br[0]) / 2, bl[1] + fs * 1.2, color, fs);
+        decVertex(ctx, 'V', apex[0], apex[1] - vs * 0.8, fv);
+        decVertex(ctx, 'A', bl[0] - vs, bl[1] + vs * 0.5, fv);
+        decVertex(ctx, 'B', br[0] + vs, br[1] + vs * 0.5, fv);
+        decVertex(ctx, 'C', br2[0] + vs, br2[1] + vs * 0.5, fv, '#94a3b8');
+        decVertex(ctx, 'D', bl2[0] - vs, bl2[1] + vs * 0.5, fv, '#94a3b8');
+        decVertex(ctx, 'O', bCx + vs, bCy, fv);
+        decVertex(ctx, 'M', mX, mY + vs * 0.8, fv);
+      }
+      break;
+    }
+
+    case 'frustum-pyramid': {
+      // Trunchi de piramidă patrulateră
+      const s1 = r * 0.72,
+        s2 = s1 * 0.52,
+        hFP = r * 0.85;
+      // bottom base
+      const A: Pt = ob(cx, cy, -s1, s1, 0);
+      const B: Pt = ob(cx, cy, s1, s1, 0);
+      const Cv: Pt = ob(cx, cy, s1, s1, s1 * 2);
+      const D: Pt = ob(cx, cy, -s1, s1, s1 * 2);
+      // top base
+      const oy = cy - hFP;
+      const offZ = s1 - s2;
+      const Ap: Pt = ob(cx, oy, -s2, s2, offZ);
+      const Bp: Pt = ob(cx, oy, s2, s2, offZ);
+      const Cp: Pt = ob(cx, oy, s2, s2, offZ + s2 * 2);
+      const Dp: Pt = ob(cx, oy, -s2, s2, offZ + s2 * 2);
+      // base and top
+      face3(ctx, [A, B, Cv, D]);
+      face3(ctx, [Ap, Bp, Cp, Dp]);
+      // visible lateral faces
+      face3(ctx, [A, B, Bp, Ap]);
+      face3(ctx, [B, Cv, Cp, Bp]);
+      // hidden
+      ctx.setLineDash([4, 4]);
+      edge3(ctx, A, D, true);
+      edge3(ctx, D, Cv, true);
+      edge3(ctx, D, Dp, true);
+      edge3(ctx, Ap, Dp, true);
+      edge3(ctx, Dp, Cp, true);
+      ctx.setLineDash([]);
+      // centre axis
+      const bCx2 = (A[0] + B[0] + Cv[0] + D[0]) / 4,
+        bCy2 = (A[1] + B[1] + Cv[1] + D[1]) / 4;
+      const tCx = (Ap[0] + Bp[0] + Cp[0] + Dp[0]) / 4,
+        tCy = (Ap[1] + Bp[1] + Cp[1] + Dp[1]) / 4;
+      if (style?.height) {
+        decAxis(ctx, tCx, tCy, bCx2, bCy2, lw);
+        decDot(ctx, tCx, tCy, Math.max(2, lw * 1.5));
+        decDot(ctx, bCx2, bCy2, Math.max(2, lw * 1.5));
+        if (style?.labels) decLabel(ctx, 'h', tCx + fs, (tCy + bCy2) / 2, DEC_HEIGHT, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'a', (A[0] + B[0]) / 2, A[1] + fs * 1.2, color, fs);
+        decLabel(ctx, 'b', (Ap[0] + Bp[0]) / 2, Ap[1] - fs * 1.1, color, fs);
+        decVertex(ctx, 'A', A[0] - vs, A[1] + vs * 0.5, fv);
+        decVertex(ctx, 'B', B[0] + vs, B[1] + vs * 0.5, fv);
+        decVertex(ctx, 'A′', Ap[0] - vs, Ap[1] - vs * 0.5, fv);
+        decVertex(ctx, 'B′', Bp[0] + vs, Bp[1] - vs * 0.5, fv);
+        decVertex(ctx, 'C′', Cp[0] + vs, Cp[1] - vs * 0.5, fv);
       }
       break;
     }
 
     case 'tetrahedron': {
-      const s = r * 0.85;
-      const h = s * Math.sqrt(2 / 3);
-      const A: Pt = [cx, cy - h * 1.2];
-      const Bpt: Pt = [cx + s * 0.9, cy + h * 0.7];
-      const C: Pt = [cx - s * 0.9, cy + h * 0.7];
-      const D: Pt = [cx + s * 0.3, cy + h * 0.05];
-      face3(ctx, [A, Bpt, C]); // front
-      face3(ctx, [A, Bpt, D]); // right
+      const s = r * 0.85,
+        hT = s * Math.sqrt(2 / 3);
+      const Av: Pt = [cx, cy - hT * 1.2];
+      const Bv: Pt = [cx + s * 0.9, cy + hT * 0.7];
+      const Cv2: Pt = [cx - s * 0.9, cy + hT * 0.7];
+      const Dv: Pt = [cx + s * 0.3, cy + hT * 0.05];
+      face3(ctx, [Av, Bv, Cv2]);
+      face3(ctx, [Av, Bv, Dv]);
       ctx.setLineDash([4, 4]);
-      face3(ctx, [A, C, D]);
-      ctx.beginPath();
-      ctx.moveTo(Bpt[0], Bpt[1]);
-      ctx.lineTo(D[0], D[1]);
-      ctx.stroke();
+      face3(ctx, [Av, Cv2, Dv]);
+      edge3(ctx, Bv, Dv, true);
       ctx.setLineDash([]);
-      face3(ctx, [Bpt, C, D], true);
+      face3(ctx, [Bv, Cv2, Dv], true);
       if (style?.labels) {
-        decLabel(ctx, 'a', (A[0] + Bpt[0]) / 2 + fs, (A[1] + Bpt[1]) / 2, color, fs);
+        decLabel(ctx, 'a', (Av[0] + Bv[0]) / 2 + fs, (Av[1] + Bv[1]) / 2, color, fs);
+        decVertex(ctx, 'A', Av[0], Av[1] - vs * 0.8, fv);
+        decVertex(ctx, 'B', Bv[0] + vs, Bv[1] + vs * 0.5, fv);
+        decVertex(ctx, 'C', Cv2[0] - vs, Cv2[1] + vs * 0.5, fv);
+        decVertex(ctx, 'D', Dv[0] + vs, Dv[1], fv, '#94a3b8');
       }
       break;
     }
 
     case 'cone': {
-      const s = r * 0.82;
-      const h = r * 1.1;
+      const s = r * 0.82,
+        h = r * 1.1;
       const apex: Pt = [cx, cy - h];
-      // base ellipse
+      const botY = cy + h * 0.15;
       ctx.beginPath();
-      ctx.ellipse(cx, cy + h * 0.15, s, s * 0.32, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, botY, s, s * 0.32, 0, 0, Math.PI * 2);
       ctx.stroke();
       ctx.beginPath();
       ctx.moveTo(apex[0], apex[1]);
-      ctx.lineTo(cx - s, cy + h * 0.15);
+      ctx.lineTo(cx - s, botY);
       ctx.stroke();
       ctx.beginPath();
       ctx.moveTo(apex[0], apex[1]);
-      ctx.lineTo(cx + s, cy + h * 0.15);
+      ctx.lineTo(cx + s, botY);
       ctx.stroke();
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
-      ctx.ellipse(cx, cy + h * 0.15, s, s * 0.32, 0, Math.PI, Math.PI * 2);
+      ctx.ellipse(cx, botY, s, s * 0.32, 0, Math.PI, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
       if (style?.height) {
-        decDiag(ctx, cx, cy - h, cx, cy + h * 0.15, lw);
+        decAxis(ctx, cx, cy - h, cx, botY, lw);
         if (style?.labels) decLabel(ctx, 'h', cx + fs * 1.0, cy - h * 0.4, DEC_HEIGHT, fs);
       }
       if (style?.labels) {
-        decLabel(ctx, 'R', cx + s / 2, cy + h * 0.15 + fs * 1.2, DEC_HEIGHT, fs);
-        decLabel(ctx, 'G', (cx + cx + s) / 2 + fs * 1.0, (cy - h + cy + h * 0.15) / 2, color, fs);
+        decDot(ctx, cx, botY, Math.max(2, lw * 1.5));
+        decRed(ctx, cx, botY, cx + s, botY, lw);
+        decLabel(ctx, 'R', cx + s / 2, botY + fs * 1.2, DEC_HEIGHT, fs);
+        decLabel(ctx, 'G', cx + s / 2 + fs * 1.0, cy - h * 0.4 + fs, color, fs);
+        decVertex(ctx, 'V', cx, cy - h - vs * 0.7, fv);
+        decVertex(ctx, 'O', cx, botY + vs * 0.8, fv);
+        decVertex(ctx, 'A', cx - s - vs, botY, fv);
+        decVertex(ctx, 'B', cx + s + vs, botY, fv);
+      }
+      break;
+    }
+
+    case 'frustum-cone': {
+      // Trunchi de con
+      const s1 = r * 0.82,
+        s2 = s1 * 0.5,
+        hFC = r * 0.95;
+      const topY = cy - hFC * 0.7,
+        botY2 = cy + hFC * 0.3;
+      ctx.beginPath();
+      ctx.ellipse(cx, botY2, s1, s1 * 0.32, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(cx, topY, s2, s2 * 0.32, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx - s1, botY2);
+      ctx.lineTo(cx - s2, topY);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx + s1, botY2);
+      ctx.lineTo(cx + s2, topY);
+      ctx.stroke();
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.ellipse(cx, botY2, s1, s1 * 0.32, 0, Math.PI, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (style?.height) {
+        decAxis(ctx, cx, topY, cx, botY2, lw);
+        if (style?.labels) decLabel(ctx, 'h', cx + fs, (topY + botY2) / 2, DEC_HEIGHT, fs);
+      }
+      if (style?.labels) {
+        decDot(ctx, cx, topY, Math.max(2, lw * 1.5));
+        decDot(ctx, cx, botY2, Math.max(2, lw * 1.5));
+        decRed(ctx, cx, botY2, cx + s1, botY2, lw);
+        decRed(ctx, cx, topY, cx + s2, topY, lw);
+        decLabel(ctx, 'R', cx + s1 / 2, botY2 + fs * 1.2, DEC_HEIGHT, fs);
+        decLabel(ctx, 'r', cx + s2 / 2, topY - fs * 1.1, DEC_HEIGHT, fs);
+        decLabel(ctx, 'G', cx + s1 / 2 + fs * 1.2, (topY + botY2) / 2, color, fs);
+        decVertex(ctx, 'A′', cx - s2 - vs, topY, fv);
+        decVertex(ctx, 'O′', cx, topY - vs * 0.8, fv);
+        decVertex(ctx, 'B′', cx + s2 + vs, topY, fv);
+        decVertex(ctx, 'A', cx - s1 - vs, botY2, fv);
+        decVertex(ctx, 'O', cx, botY2 + vs * 0.8, fv);
+        decVertex(ctx, 'B', cx + s1 + vs, botY2, fv);
       }
       break;
     }
 
     case 'cylinder': {
-      const s = r * 0.78;
-      const h = r * 1.0;
+      const s = r * 0.78,
+        h = r * 1.0;
+      const topY2 = cy - h,
+        botY3 = cy + h;
       ctx.beginPath();
-      ctx.ellipse(cx, cy - h, s, s * 0.32, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, topY2, s, s * 0.32, 0, 0, Math.PI * 2);
       ctx.stroke();
       ctx.beginPath();
-      ctx.ellipse(cx, cy + h, s, s * 0.32, 0, 0, Math.PI);
+      ctx.ellipse(cx, botY3, s, s * 0.32, 0, 0, Math.PI);
       ctx.stroke();
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
-      ctx.ellipse(cx, cy + h, s, s * 0.32, 0, Math.PI, Math.PI * 2);
+      ctx.ellipse(cx, botY3, s, s * 0.32, 0, Math.PI, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.beginPath();
-      ctx.moveTo(cx - s, cy - h);
-      ctx.lineTo(cx - s, cy + h);
+      ctx.moveTo(cx - s, topY2);
+      ctx.lineTo(cx - s, botY3);
       ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo(cx + s, cy - h);
-      ctx.lineTo(cx + s, cy + h);
+      ctx.moveTo(cx + s, topY2);
+      ctx.lineTo(cx + s, botY3);
       ctx.stroke();
       if (style?.height) {
-        decDiag(ctx, cx, cy - h, cx, cy + h, lw);
+        decAxis(ctx, cx, topY2, cx, botY3, lw);
         if (style?.labels) decLabel(ctx, 'h', cx + fs * 1.0, cy, DEC_HEIGHT, fs);
       }
       if (style?.labels) {
-        // Radius line on top
-        ctx.save();
-        ctx.strokeStyle = DEC_HEIGHT;
-        ctx.lineWidth = Math.max(0.8, lw * 0.65);
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - h);
-        ctx.lineTo(cx + s, cy - h);
-        ctx.stroke();
-        ctx.restore();
-        decLabel(ctx, 'R', cx + s / 2, cy - h - fs * 1.1, DEC_HEIGHT, fs);
+        decDot(ctx, cx, topY2, Math.max(2, lw * 1.5));
+        decDot(ctx, cx, botY3, Math.max(2, lw * 1.5));
+        decRed(ctx, cx, topY2, cx + s, topY2, lw);
+        decLabel(ctx, 'R', cx + s / 2, topY2 - fs * 1.1, DEC_HEIGHT, fs);
+        decVertex(ctx, 'A′', cx - s - vs, topY2, fv);
+        decVertex(ctx, 'O′', cx, topY2 - vs * 0.8, fv);
+        decVertex(ctx, 'B′', cx + s + vs, topY2, fv);
+        decVertex(ctx, 'A', cx - s - vs, botY3, fv);
+        decVertex(ctx, 'O', cx, botY3 + vs * 0.8, fv);
+        decVertex(ctx, 'B', cx + s + vs, botY3, fv);
       }
       break;
     }
@@ -1032,23 +1432,12 @@ export function drawGeom(
       ctx.stroke();
       ctx.setLineDash([]);
       if (style?.labels) {
-        // Radius from centre to right
-        ctx.save();
-        ctx.strokeStyle = DEC_HEIGHT;
-        ctx.lineWidth = Math.max(0.8, lw * 0.65);
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(cx + r, cy);
-        ctx.stroke();
-        ctx.restore();
-        ctx.save();
-        ctx.fillStyle = DEC_HEIGHT;
-        ctx.beginPath();
-        ctx.arc(cx, cy, Math.max(2, lw * 1.5), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
+        decAxis(ctx, cx - r, cy, cx + r, cy, lw);
+        decDot(ctx, cx, cy, Math.max(2, lw * 1.5));
         decLabel(ctx, 'R', cx + r / 2, cy - fs * 1.0, DEC_HEIGHT, fs);
-        decLabel(ctx, 'O', cx - fs * 0.7, cy - fs * 0.7, DEC_LABEL, fs * 0.85);
+        decVertex(ctx, 'O', cx, cy - vs * 0.8, fv);
+        decVertex(ctx, 'A', cx - r - vs, cy, fv);
+        decVertex(ctx, 'B', cx + r + vs, cy, fv);
       }
       break;
     }
