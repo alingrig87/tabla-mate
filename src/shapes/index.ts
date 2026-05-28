@@ -10,6 +10,8 @@ export type GeomKind =
   | 'tri-equilateral'
   | 'tri-isosceles'
   | 'tri-scalene'
+  | 'tri-acute'
+  | 'tri-obtuse'
   // Patrulater
   | 'square-geom'
   | 'rect-geom'
@@ -18,10 +20,10 @@ export type GeomKind =
   | 'trapezoid'
   | 'trap-right'
   | 'trap-isosceles'
+  | 'kite'
   // Poligoane regulate
   | 'pentagon'
   | 'hexagon'
-  | 'heptagon'
   | 'octagon'
   // Cercuri & conice
   | 'circle-geom'
@@ -29,6 +31,8 @@ export type GeomKind =
   | 'sector'
   | 'annulus'
   | 'ellipse'
+  | 'parabola'
+  | 'hyperbola'
   // 3D
   | 'cube'
   | 'cuboid'
@@ -38,7 +42,6 @@ export type GeomKind =
   | 'pyramid-tri'
   | 'pyramid-sq'
   | 'frustum-pyramid'
-  | 'tetrahedron'
   | 'cone'
   | 'frustum-cone'
   | 'cylinder'
@@ -90,6 +93,8 @@ export const SHAPE_GROUPS: ShapeGroup[] = [
     label: 'Triunghiuri',
     shapes: [
       { kind: 'tri-right', label: 'Dreptunghic' },
+      { kind: 'tri-acute', label: 'Ascuțitunghic' },
+      { kind: 'tri-obtuse', label: 'Obtuzunghic' },
       { kind: 'tri-equilateral', label: 'Echilateral' },
       { kind: 'tri-isosceles', label: 'Isoscel' },
       { kind: 'tri-scalene', label: 'Oarecare' },
@@ -102,6 +107,7 @@ export const SHAPE_GROUPS: ShapeGroup[] = [
       { kind: 'rect-geom', label: 'Dreptunghi' },
       { kind: 'rhombus', label: 'Romb' },
       { kind: 'parallelogram', label: 'Paralelogram' },
+      { kind: 'kite', label: 'Deltoid' },
       { kind: 'trapezoid', label: 'Trapez' },
       { kind: 'trap-right', label: 'Trapez dreptunghic' },
       { kind: 'trap-isosceles', label: 'Trapez isoscel' },
@@ -112,7 +118,6 @@ export const SHAPE_GROUPS: ShapeGroup[] = [
     shapes: [
       { kind: 'pentagon', label: 'Pentagon' },
       { kind: 'hexagon', label: 'Hexagon' },
-      { kind: 'heptagon', label: 'Heptagon' },
       { kind: 'octagon', label: 'Octogon' },
     ],
   },
@@ -124,6 +129,8 @@ export const SHAPE_GROUPS: ShapeGroup[] = [
       { kind: 'sector', label: 'Sector' },
       { kind: 'annulus', label: 'Coroană circ.' },
       { kind: 'ellipse', label: 'Elipsă' },
+      { kind: 'parabola', label: 'Parabolă' },
+      { kind: 'hyperbola', label: 'Hiperbolă' },
     ],
   },
   {
@@ -137,7 +144,6 @@ export const SHAPE_GROUPS: ShapeGroup[] = [
       { kind: 'pyramid-tri', label: 'Piramidă △' },
       { kind: 'pyramid-sq', label: 'Piramidă □' },
       { kind: 'frustum-pyramid', label: 'Trunchi piramidă' },
-      { kind: 'tetrahedron', label: 'Tetraedru' },
       { kind: 'cone', label: 'Con' },
       { kind: 'frustum-cone', label: 'Trunchi con' },
       { kind: 'cylinder', label: 'Cilindru' },
@@ -526,12 +532,12 @@ export function drawGeom(
         if (style?.labels) decLabel(ctx, 'u', R - r * 0.32, B - r * 0.14, DEC_ANGLE, fs);
       }
       if (style?.labels) {
-        decLabel(ctx, 'c₁', L - fs * 1.0, cy, DEC_DIAG, fs);
-        decLabel(ctx, 'c₂', cx, B + fs * 1.2, DEC_DIAG, fs);
+        decLabel(ctx, 'c₁', L - fs * 1.4, cy, DEC_DIAG, fs);
+        decLabel(ctx, 'c₂', cx, B + fs * 1.4, DEC_DIAG, fs);
         decLabel(ctx, 'i', cx + fs * 0.9, cy - fs * 0.4, color, fs);
-        decVertex(ctx, 'A', L - vs, B + vs * 0.6, fv);
-        decVertex(ctx, 'B', R + vs, B + vs * 0.6, fv);
-        decVertex(ctx, 'C', L - vs, T - vs * 0.5, fv);
+        decVertex(ctx, 'A', L - vs, B + vs * 0.7, fv);
+        decVertex(ctx, 'B', R + vs, B + vs * 0.7, fv);
+        decVertex(ctx, 'C', L - vs * 0.4, T - vs * 0.9, fv); // moved right+up to clear A
       }
       break;
     }
@@ -626,6 +632,69 @@ export function drawGeom(
         decVertex(ctx, 'A', apexX, T - vs, fv);
         decVertex(ctx, 'B', R + vs, B + vs * 0.5, fv);
         decVertex(ctx, 'C', L - vs, B + vs * 0.5, fv);
+      }
+      break;
+    }
+
+    case 'tri-acute': {
+      // Scalene acute triangle — all three angles clearly < 90°
+      const p1: Pt = [cx + hw * 0.08, T + hh * 0.06]; // A — apex, near top
+      const p2: Pt = [R - hw * 0.07, B]; // B — bottom right
+      const p3: Pt = [L + hw * 0.04, B - hh * 0.12]; // C — bottom left, slightly raised
+      poly(ctx, [p1, p2, p3]);
+      if (style?.angle) {
+        const aAB = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]);
+        const aAC = Math.atan2(p3[1] - p1[1], p3[0] - p1[0]);
+        decAngle(ctx, p1[0], p1[1], r * 0.22, aAB, aAC, false);
+        if (style?.labels) decLabel(ctx, 'α', p1[0] - r * 0.06, p1[1] + r * 0.2, DEC_ANGLE, fs);
+      }
+      if (style?.height) {
+        decHeight(ctx, p1[0], p1[1], p1[0], p2[1], lw, sq, 1, -1);
+        if (style?.labels)
+          decLabel(ctx, 'h', p1[0] + fs * 0.9, (p1[1] + p2[1]) / 2, DEC_HEIGHT, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'a', (p2[0] + p3[0]) / 2, p2[1] + fs * 1.3, color, fs);
+        decLabel(ctx, 'b', (p1[0] + p3[0]) / 2 - fs, (p1[1] + p3[1]) / 2, color, fs);
+        decLabel(ctx, 'c', (p1[0] + p2[0]) / 2 + fs, (p1[1] + p2[1]) / 2, color, fs);
+        decVertex(ctx, 'A', p1[0], p1[1] - vs * 0.8, fv);
+        decVertex(ctx, 'B', p2[0] + vs, p2[1] + vs * 0.5, fv);
+        decVertex(ctx, 'C', p3[0] - vs, p3[1] + vs * 0.5, fv);
+      }
+      break;
+    }
+
+    case 'tri-obtuse': {
+      // Obtuse angle at A (left vertex) — clearly > 90°
+      const p1: Pt = [L + hw * 0.12, cy + hh * 0.18]; // A — obtuse vertex, left-center
+      const p2: Pt = [R - hw * 0.05, B - hh * 0.05]; // B — bottom right
+      const p3: Pt = [cx - hw * 0.1, T + hh * 0.12]; // C — upper center-left
+      poly(ctx, [p1, p2, p3]);
+      if (style?.angle) {
+        const aAB = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]);
+        const aAC = Math.atan2(p3[1] - p1[1], p3[0] - p1[0]);
+        // obtuse arc: ccw=true draws the larger (> 90°) arc between the two arms
+        decAngle(ctx, p1[0], p1[1], r * 0.22, aAB, aAC, true);
+        if (style?.labels) decLabel(ctx, 'α', p1[0] + r * 0.26, p1[1] - r * 0.05, DEC_ANGLE, fs);
+      }
+      if (style?.height) {
+        // foot of altitude from C to AB
+        const dx = p2[0] - p1[0],
+          dy = p2[1] - p1[1];
+        const t = ((p3[0] - p1[0]) * dx + (p3[1] - p1[1]) * dy) / (dx * dx + dy * dy);
+        const fx = p1[0] + t * dx,
+          fy = p1[1] + t * dy;
+        decAxis(ctx, p3[0], p3[1], fx, fy, lw);
+        if (style?.labels)
+          decLabel(ctx, 'h', (p3[0] + fx) / 2 + fs, (p3[1] + fy) / 2, DEC_HEIGHT, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'a', (p2[0] + p3[0]) / 2 + fs * 0.8, (p2[1] + p3[1]) / 2, color, fs);
+        decLabel(ctx, 'b', (p1[0] + p3[0]) / 2 - fs, (p1[1] + p3[1]) / 2, color, fs);
+        decLabel(ctx, 'c', (p1[0] + p2[0]) / 2, p1[1] + fs * 1.3, color, fs);
+        decVertex(ctx, 'A', p1[0] - vs * 0.8, p1[1] + vs * 0.5, fv);
+        decVertex(ctx, 'B', p2[0] + vs, p2[1] + vs * 0.5, fv);
+        decVertex(ctx, 'C', p3[0] - vs * 0.3, p3[1] - vs * 0.8, fv);
       }
       break;
     }
@@ -755,8 +824,8 @@ export function drawGeom(
         if (style?.labels) decLabel(ctx, 'lₘ', (mlL + mlR) / 2, cy - fs * 1.1, DEC_DIAG, fs);
       }
       if (style?.labels) {
-        decLabel(ctx, 'B', cx, B + fs * 1.2, color, fs);
-        decLabel(ctx, 'b', (topL + topR) / 2, T - fs * 1.1, color, fs);
+        decLabel(ctx, 'a', cx, B + fs * 1.4, color, fs);
+        decLabel(ctx, 'b', (topL + topR) / 2, T - fs * 1.6, color, fs);
         decVertex(ctx, 'D', topL - vs * 0.5, T - vs * 0.6, fv);
         decVertex(ctx, 'C', topR + vs * 0.5, T - vs * 0.6, fv);
         decVertex(ctx, 'B', R + vs, B + vs * 0.6, fv);
@@ -780,8 +849,8 @@ export function drawGeom(
         if (style?.labels) decLabel(ctx, 'h', L + fs * 1.0, cy, DEC_HEIGHT, fs);
       }
       if (style?.labels) {
-        decLabel(ctx, 'B', cx, B + fs * 1.2, color, fs);
-        decLabel(ctx, 'b', (L + R - ins) / 2, T - fs * 1.1, color, fs);
+        decLabel(ctx, 'a', cx, B + fs * 1.4, color, fs);
+        decLabel(ctx, 'b', (L + R - ins) / 2, T - fs * 1.6, color, fs);
         decVertex(ctx, 'D', L - vs, T - vs * 0.6, fv);
         decVertex(ctx, 'C', R - ins + vs, T - vs * 0.6, fv);
         decVertex(ctx, 'B', R + vs, B + vs * 0.6, fv);
@@ -809,12 +878,59 @@ export function drawGeom(
         if (style?.labels) decLabel(ctx, 'lₘ', cx, cy - fs * 1.1, DEC_DIAG, fs);
       }
       if (style?.labels) {
-        decLabel(ctx, 'B', cx, B + fs * 1.2, color, fs);
-        decLabel(ctx, 'b', cx, T - fs * 1.1, color, fs);
+        decLabel(ctx, 'a', cx, B + fs * 1.4, color, fs);
+        decLabel(ctx, 'b', cx, T - fs * 1.6, color, fs);
         decVertex(ctx, 'D', L + ins - vs * 0.5, T - vs * 0.6, fv);
         decVertex(ctx, 'C', R - ins + vs * 0.5, T - vs * 0.6, fv);
         decVertex(ctx, 'B', R + vs, B + vs * 0.6, fv);
         decVertex(ctx, 'A', L - vs, B + vs * 0.6, fv);
+      }
+      break;
+    }
+
+    case 'kite': {
+      // Deltoid (zmeu): two pairs of adjacent equal sides, symmetric about vertical axis
+      // D = top, A = left, C = bottom, B = right  (spine = D-C, short axis = A-B)
+      const kD: Pt = [cx, T + hh * 0.12]; // top vertex (acute)
+      const kA: Pt = [L + hw * 0.1, cy - hh * 0.12]; // left vertex
+      const kC: Pt = [cx, B - hh * 0.06]; // bottom vertex (obtuse)
+      const kB: Pt = [R - hw * 0.1, cy - hh * 0.12]; // right vertex (symmetric to A)
+      poly(ctx, [kD, kB, kC, kA]);
+      if (style?.diagonal) {
+        // spine (main diagonal D-C)
+        decDiag(ctx, kD[0], kD[1], kC[0], kC[1], lw);
+        // short diagonal A-B (perpendicular to spine)
+        decDiag(ctx, kA[0], kA[1], kB[0], kB[1], lw);
+        // right-angle mark at intersection
+        const ix = cx,
+          iy = cy - hh * 0.12; // where A-B meets D-C
+        ctx.save();
+        ctx.strokeStyle = DEC_HEIGHT;
+        ctx.lineWidth = Math.max(0.8, lw * 0.65);
+        ctx.beginPath();
+        ctx.moveTo(ix + sq * 0.5, iy);
+        ctx.lineTo(ix + sq * 0.5, iy - sq * 0.5);
+        ctx.lineTo(ix, iy - sq * 0.5);
+        ctx.stroke();
+        ctx.restore();
+        if (style?.labels) {
+          decLabel(ctx, 'd₁', cx + fs * 1.0, (kD[1] + kC[1]) / 2, DEC_DIAG, fs);
+          decLabel(ctx, 'd₂', (kA[0] + cx) / 2, kA[1] - fs * 1.0, DEC_DIAG, fs);
+        }
+      }
+      if (style?.angle) {
+        const aDC_B = Math.atan2(kB[1] - kD[1], kB[0] - kD[0]);
+        const aDC_A = Math.atan2(kA[1] - kD[1], kA[0] - kD[0]);
+        decAngle(ctx, kD[0], kD[1], r * 0.2, aDC_B, aDC_A, true);
+        if (style?.labels) decLabel(ctx, 'α', kD[0], kD[1] + r * 0.22, DEC_ANGLE, fs);
+      }
+      if (style?.labels) {
+        decLabel(ctx, 'p', (kD[0] + kA[0]) / 2 - fs * 0.8, (kD[1] + kA[1]) / 2, color, fs);
+        decLabel(ctx, 'q', (kA[0] + kC[0]) / 2 - fs * 0.8, (kA[1] + kC[1]) / 2, color, fs);
+        decVertex(ctx, 'D', kD[0], kD[1] - vs * 0.7, fv);
+        decVertex(ctx, 'A', kA[0] - vs, kA[1], fv);
+        decVertex(ctx, 'C', kC[0], kC[1] + vs * 0.7, fv);
+        decVertex(ctx, 'B', kB[0] + vs, kB[1], fv);
       }
       break;
     }
@@ -861,10 +977,6 @@ export function drawGeom(
       }
       break;
     }
-    case 'heptagon':
-      poly(ctx, regularPts(7, cx, cy, r, -Math.PI / 2));
-      if (style?.labels) decLabel(ctx, 'l', cx + r + fs, cy, color, fs);
-      break;
     case 'octagon':
       poly(ctx, regularPts(8, cx, cy, r, Math.PI / 8));
       if (style?.labels) decLabel(ctx, 'l', cx + r + fs, cy, color, fs);
@@ -949,6 +1061,78 @@ export function drawGeom(
         decVertex(ctx, 'B', cx + a + vs, cy, fv);
         decVertex(ctx, 'C', cx, cy - b - vs * 0.6, fv);
         decVertex(ctx, 'D', cx, cy + b + vs * 0.6, fv);
+      }
+      break;
+    }
+
+    case 'parabola': {
+      // y = a·x² opening upward, vertex at bottom-center
+      const vx = cx,
+        vy = B - hh * 0.06;
+      const aP = (T + hh * 0.04 - vy) / (hw * hw); // so curve reaches near top at ±hw
+      ctx.beginPath();
+      for (let i = 0; i <= 80; i++) {
+        const x = L + ((R - L) * i) / 80;
+        const y = vy + aP * (x - vx) * (x - vx);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      if (style?.height) {
+        // axis of symmetry
+        decAxis(ctx, vx, vy, vx, T + hh * 0.1, lw);
+        if (style?.labels) decLabel(ctx, 'ax', vx + fs * 1.2, (vy + T) / 2, DEC_HEIGHT, fs);
+      }
+      if (style?.labels) {
+        // focus above vertex
+        const focY = vy + 1 / (4 * Math.abs(aP));
+        decDot(ctx, vx, Math.max(focY, vy - hh * 0.35), Math.max(2, lw * 1.5));
+        decVertex(ctx, 'V', vx + vs * 0.6, vy + vs * 0.7, fv);
+        decVertex(ctx, 'F', vx + vs * 0.6, Math.max(focY, vy - hh * 0.35) - vs * 0.7, fv);
+        decLabel(ctx, 'p', vx - fs * 1.5, vy - hh * 0.18, DEC_HEIGHT, fs);
+      }
+      break;
+    }
+
+    case 'hyperbola': {
+      // Horizontal hyperbola x²/a² - y²/b² = 1, two branches
+      const hA = hw * 0.38,
+        hB = hh * 0.62;
+      // Right branch — parametric: x = hA·cosh(t), y = hB·sinh(t)
+      ctx.beginPath();
+      for (let i = 0; i <= 60; i++) {
+        const t = -1.4 + (i * 2.8) / 60;
+        const x = cx + hA * Math.cosh(t);
+        const y = cy + hB * Math.sinh(t);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      // Left branch
+      ctx.beginPath();
+      for (let i = 0; i <= 60; i++) {
+        const t = -1.4 + (i * 2.8) / 60;
+        const x = cx - hA * Math.cosh(t);
+        const y = cy + hB * Math.sinh(t);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      // Asymptotes (dashed green)
+      if (style?.diagonal) {
+        decDiag(ctx, L, cy - hB * (hw / hA), R, cy + hB * (hw / hA), lw);
+        decDiag(ctx, L, cy + hB * (hw / hA), R, cy - hB * (hw / hA), lw);
+        if (style?.labels) {
+          decLabel(ctx, 'y=±(b/a)x', cx + hw * 0.55, cy - hh * 0.7, DEC_DIAG, fs * 0.8);
+        }
+      }
+      if (style?.labels) {
+        decDot(ctx, cx, cy, Math.max(2, lw * 1.5));
+        decVertex(ctx, 'O', cx, cy + vs * 0.7, fv);
+        decVertex(ctx, 'A', cx + hA + vs, cy, fv);
+        decVertex(ctx, 'B', cx - hA - vs, cy, fv);
+        decLabel(ctx, 'a', cx + hA / 2, cy + fs * 1.1, color, fs);
+        decLabel(ctx, 'b', cx - fs * 1.1, cy - hB / 2, DEC_HEIGHT, fs);
       }
       break;
     }
@@ -1259,30 +1443,6 @@ export function drawGeom(
         decVertex(ctx, 'A′', Ap[0] - vs, Ap[1] - vs * 0.5, fv);
         decVertex(ctx, 'B′', Bp[0] + vs, Bp[1] - vs * 0.5, fv);
         decVertex(ctx, 'C′', Cp[0] + vs, Cp[1] - vs * 0.5, fv);
-      }
-      break;
-    }
-
-    case 'tetrahedron': {
-      const s = r * 0.85,
-        hT = s * Math.sqrt(2 / 3);
-      const Av: Pt = [cx, cy - hT * 1.2];
-      const Bv: Pt = [cx + s * 0.9, cy + hT * 0.7];
-      const Cv2: Pt = [cx - s * 0.9, cy + hT * 0.7];
-      const Dv: Pt = [cx + s * 0.3, cy + hT * 0.05];
-      face3(ctx, [Av, Bv, Cv2]);
-      face3(ctx, [Av, Bv, Dv]);
-      ctx.setLineDash([4, 4]);
-      face3(ctx, [Av, Cv2, Dv]);
-      edge3(ctx, Bv, Dv, true);
-      ctx.setLineDash([]);
-      face3(ctx, [Bv, Cv2, Dv], true);
-      if (style?.labels) {
-        decLabel(ctx, 'a', (Av[0] + Bv[0]) / 2 + fs, (Av[1] + Bv[1]) / 2, color, fs);
-        decVertex(ctx, 'A', Av[0], Av[1] - vs * 0.8, fv);
-        decVertex(ctx, 'B', Bv[0] + vs, Bv[1] + vs * 0.5, fv);
-        decVertex(ctx, 'C', Cv2[0] - vs, Cv2[1] + vs * 0.5, fv);
-        decVertex(ctx, 'D', Dv[0] + vs, Dv[1], fv, '#94a3b8');
       }
       break;
     }

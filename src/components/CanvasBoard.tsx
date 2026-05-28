@@ -793,22 +793,25 @@ function PillBtn({
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-// 9 preset colors: near-black, warm + cool spectrum, white
+// 10 preset colors: black, gray, full spectrum, white
 const PALETTE = [
-  '#1a1a1a',
-  '#e53e3e',
-  '#dd6b20',
-  '#d69e2e',
-  '#276749',
-  '#2b6cb0',
-  '#805ad5',
-  '#d53f8c',
-  '#ffffff',
+  '#1a1a1a', // black
+  '#6b7280', // gray
+  '#ef4444', // red
+  '#f97316', // orange
+  '#eab308', // yellow
+  '#22c55e', // green
+  '#3b82f6', // blue
+  '#8b5cf6', // purple
+  '#ec4899', // pink
+  '#ffffff', // white
 ];
 
 const PEN_SIZES = [2, 4, 8, 16]; // stroke widths in CSS pixels
 const TEXT_FONT_SIZE = 24;
-const ERASER_RADIUS = 20; // hit-test tolerance in CSS pixels
+// Eraser hit-test tolerance (CSS px) — one entry per PEN_SIZES index.
+// Tying eraser size to pen size lets users switch between precision and broad erasure.
+const ERASER_RADII = [5, 10, 20, 40];
 
 // Discrete zoom levels — wheel/button zoom snaps to nearest step
 const ZOOM_STEPS = [0.1, 0.15, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4];
@@ -1502,9 +1505,10 @@ export default function CanvasBoard({
   // ── Eraser helpers ────────────────────────────────────────────────────────
 
   // Find the topmost item under (px,py) in world coordinates.
-  // Tolerance is ERASER_RADIUS screen pixels, converted to world units at current zoom.
+  // Tolerance is taken from ERASER_RADII[penSize index] screen pixels, converted to world units.
   function findTopHit(px: number, py: number): number {
-    const tol = ERASER_RADIUS / scaleRef.current; // world-space tolerance
+    const radIdx = PEN_SIZES.indexOf(penSizeRef.current);
+    const tol = ERASER_RADII[radIdx >= 0 ? radIdx : 2] / scaleRef.current; // world-space tolerance
     for (let i = itemsRef.current.length - 1; i >= 0; i--) {
       if (hitTest(itemsRef.current[i], px, py, tol)) return i;
     }
@@ -2113,8 +2117,8 @@ export default function CanvasBoard({
             userSelect: 'none',
           }}
         >
-          {/* Preset palette */}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', maxWidth: 224 }}>
+          {/* Preset palette — 5 per row, color picker as 11th slot */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 28px)', gap: 8 }}>
             {PALETTE.map((c) => (
               <button
                 key={c}
@@ -2123,13 +2127,18 @@ export default function CanvasBoard({
                   width: 28,
                   height: 28,
                   borderRadius: '50%',
-                  border: c === color ? '3px solid #555' : '2px solid #ddd',
+                  border:
+                    c === color
+                      ? '3px solid #555'
+                      : c === '#ffffff'
+                        ? '2px solid #ccc'
+                        : '2px solid transparent',
                   background: c,
                   cursor: 'pointer',
                   padding: 0,
-                  flexShrink: 0,
                   boxSizing: 'border-box',
                   transition: 'border 0.1s',
+                  boxShadow: c === '#ffffff' ? 'inset 0 0 0 1px #e0e0e0' : 'none',
                 }}
               />
             ))}
@@ -2144,16 +2153,17 @@ export default function CanvasBoard({
                 height: 28,
                 borderRadius: '50%',
                 cursor: 'pointer',
-                border: 'none',
+                border: '2px solid #ddd',
                 padding: 0,
+                boxSizing: 'border-box',
               }}
             />
           </div>
 
-          {/* Stroke size selector */}
+          {/* Stroke / eraser size selector */}
           <div>
             <div style={{ fontSize: 11, color: '#888', marginBottom: 6, fontFamily: 'sans-serif' }}>
-              Stroke size
+              {tool === 'eraser' ? 'Dimensiune radieră' : 'Stroke size'}
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               {PEN_SIZES.map((s) => (
@@ -2461,23 +2471,30 @@ export default function CanvasBoard({
 
       {/* ── Custom eraser cursor ─────────────────────────────────────────
           A translucent circle that follows the pointer when the eraser is active.
-          The canvas itself uses cursor:none so only this circle is visible. */}
-      {tool === 'eraser' && eraserPos && (
-        <div
-          style={{
-            position: 'fixed',
-            left: eraserPos.x - ERASER_RADIUS,
-            top: eraserPos.y - ERASER_RADIUS,
-            width: ERASER_RADIUS * 2,
-            height: ERASER_RADIUS * 2,
-            borderRadius: '50%',
-            border: '2px solid #ef4444',
-            background: 'rgba(239,68,68,0.08)',
-            pointerEvents: 'none', // don't intercept pointer events
-            zIndex: 5,
-          }}
-        />
-      )}
+          The canvas itself uses cursor:none so only this circle is visible.
+          Circle size reflects current eraser radius (tied to pen size). */}
+      {tool === 'eraser' &&
+        eraserPos &&
+        (() => {
+          const r = ERASER_RADII[PEN_SIZES.indexOf(penSize)] ?? 20;
+          return (
+            <div
+              style={{
+                position: 'fixed',
+                left: eraserPos.x - r,
+                top: eraserPos.y - r,
+                width: r * 2,
+                height: r * 2,
+                borderRadius: '50%',
+                border: '2px solid #ef4444',
+                background: 'rgba(239,68,68,0.08)',
+                pointerEvents: 'none',
+                zIndex: 5,
+                transition: 'width 0.1s, height 0.1s',
+              }}
+            />
+          );
+        })()}
 
       {/* Text input overlay */}
       {textCursor && (
