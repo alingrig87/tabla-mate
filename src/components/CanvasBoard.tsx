@@ -673,20 +673,21 @@ const IconUser = () => (
 // ─── Mini-canvas icon for each geometric shape ───────────────────────────────
 // Renders a small preview of each shape using drawGeom on a tiny off-screen canvas.
 // Each ShapeIcon is its own component so the useEffect runs per shape kind.
-function ShapeIcon({ kind }: { kind: GeomKind }) {
+function ShapeIcon({ kind, size = 40 }: { kind: GeomKind; size?: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
     const ctx = c.getContext('2d')!;
     const dpr = window.devicePixelRatio || 1;
-    c.width = 40 * dpr;
-    c.height = 40 * dpr;
+    c.width = size * dpr;
+    c.height = size * dpr;
     ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, 40, 40);
-    drawGeom(ctx, kind, '#333', 1.5, 4, 4, 36, 36);
-  }, [kind]);
-  return <canvas ref={ref} style={{ width: 40, height: 40 }} />;
+    ctx.clearRect(0, 0, size, size);
+    const pad = Math.round(size * 0.08);
+    drawGeom(ctx, kind, '#333', 1.5, pad, pad, size - pad, size - pad);
+  }, [kind, size]);
+  return <canvas ref={ref} style={{ width: size, height: size }} />;
 }
 
 // ─── Pill button + tooltip ────────────────────────────────────────────────────
@@ -2366,7 +2367,7 @@ export default function CanvasBoard({
             maxHeight: '70vh',
             overflowY: 'auto',
             userSelect: 'none',
-            minWidth: 280,
+            minWidth: 320,
           }}
         >
           {/* Decoration toggles */}
@@ -2438,7 +2439,7 @@ export default function CanvasBoard({
               >
                 {group.label}
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {group.shapes.map(({ kind, label }) => (
                   <button
                     key={kind}
@@ -2448,19 +2449,34 @@ export default function CanvasBoard({
                       setShowShapes(false);
                     }}
                     style={{
-                      width: 48,
-                      height: 48,
+                      width: 66,
                       borderRadius: 8,
                       border: activeGeom === kind ? '2px solid #555' : '1px solid #ddd',
                       background: activeGeom === kind ? '#f5f5f5' : '#fff',
                       cursor: 'pointer',
-                      padding: 2,
+                      padding: '4px 2px',
                       display: 'flex',
+                      flexDirection: 'column',
                       alignItems: 'center',
-                      justifyContent: 'center',
+                      gap: 3,
                     }}
                   >
-                    <ShapeIcon kind={kind} />
+                    <ShapeIcon kind={kind} size={48} />
+                    <span
+                      style={{
+                        fontSize: 8,
+                        lineHeight: 1.25,
+                        textAlign: 'center',
+                        fontFamily: 'sans-serif',
+                        color: '#444',
+                        maxWidth: 62,
+                        wordBreak: 'break-word',
+                        whiteSpace: 'normal',
+                        display: 'block',
+                      }}
+                    >
+                      {label}
+                    </span>
                   </button>
                 ))}
               </div>
