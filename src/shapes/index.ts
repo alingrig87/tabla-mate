@@ -419,9 +419,9 @@ export function drawGeom(
     hh = (B - T) / 2;
   const r = Math.min(hw, hh);
   const sq = Math.max(4, lw * 4);
-  const fs = Math.max(8, Math.min(hw, hh) * 0.18); // dimension label size
-  const fv = Math.max(7, fs * 1.0); // vertex label size
-  const vs = Math.max(5, fv * 1.2); // offset from vertex
+  const fs = Math.min(16, Math.max(7, Math.min(hw, hh) * 0.15)); // dimension label size, capped at 16px
+  const fv = fs; // vertex label size
+  const vs = Math.min(15, Math.max(10, fv * 1.2)); // offset from vertex, 10-15px range
 
   switch (kind) {
     // ── LINII & UNGHIURI ──────────────────────────────────────────────────────
@@ -537,7 +537,7 @@ export function drawGeom(
         decLabel(ctx, 'i', cx + fs * 0.9, cy - fs * 0.4, color, fs);
         decVertex(ctx, 'A', L - vs, B + vs * 0.7, fv);
         decVertex(ctx, 'B', R + vs, B + vs * 0.7, fv);
-        decVertex(ctx, 'C', L - vs * 0.4, T - vs * 0.9, fv); // moved right+up to clear A
+        decVertex(ctx, 'C', L - vs, T - vs * 0.7, fv);
       }
       break;
     }
@@ -794,7 +794,7 @@ export function drawGeom(
       }
       if (style?.labels) {
         decLabel(ctx, 'b', cx, B + fs * 1.2, color, fs);
-        decLabel(ctx, 'a', L + fs * 0.2, cy, color, fs);
+        decLabel(ctx, 'a', L - fs * 1.3, cy, color, fs);
         decVertex(ctx, 'D', L + sk - vs * 0.5, T - vs * 0.6, fv);
         decVertex(ctx, 'C', R + vs, T - vs * 0.6, fv);
         decVertex(ctx, 'B', R - sk + vs * 0.5, B + vs * 0.6, fv);
@@ -1085,10 +1085,11 @@ export function drawGeom(
       }
       if (style?.labels) {
         // focus above vertex
-        const focY = vy + 1 / (4 * Math.abs(aP));
-        decDot(ctx, vx, Math.max(focY, vy - hh * 0.35), Math.max(2, lw * 1.5));
+        const focY = vy + 1 / (4 * aP); // aP < 0, so focY < vy (above vertex in canvas coords)
+        const focYclamped = Math.max(focY, vy - hh * 0.35); // don't go more than 35% above vertex
+        decDot(ctx, vx, focYclamped, Math.max(2, lw * 1.5));
         decVertex(ctx, 'V', vx + vs * 0.6, vy + vs * 0.7, fv);
-        decVertex(ctx, 'F', vx + vs * 0.6, Math.max(focY, vy - hh * 0.35) - vs * 0.7, fv);
+        decVertex(ctx, 'F', vx + vs * 0.6, focYclamped - vs * 0.7, fv);
         decLabel(ctx, 'p', vx - fs * 1.5, vy - hh * 0.18, DEC_HEIGHT, fs);
       }
       break;
