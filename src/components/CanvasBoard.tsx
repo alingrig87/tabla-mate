@@ -130,15 +130,28 @@ function constrainToSquare(x1: number, y1: number, x2: number, y2: number) {
 function drawItem(ctx: CanvasRenderingContext2D, item: DrawItem) {
   ctx.save();
   switch (item.kind) {
-    case 'pen':
+    case 'pen': {
       ctx.strokeStyle = item.color;
       ctx.lineWidth = item.width;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.beginPath();
-      item.points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+      const pts = item.points;
+      if (pts.length < 2) break;
+      ctx.moveTo(pts[0].x, pts[0].y);
+      if (pts.length === 2) {
+        ctx.lineTo(pts[1].x, pts[1].y);
+      } else {
+        for (let i = 1; i < pts.length - 1; i++) {
+          const mx = (pts[i].x + pts[i + 1].x) / 2;
+          const my = (pts[i].y + pts[i + 1].y) / 2;
+          ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+        }
+        ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+      }
       ctx.stroke();
       break;
+    }
     case 'line':
       ctx.strokeStyle = item.color;
       ctx.lineWidth = item.width;
@@ -1668,10 +1681,12 @@ export default function CanvasBoard({
       if (!currentPenRef.current) return;
       currentPenRef.current.points.push(pos);
       const pts = currentPenRef.current.points;
-      const prev = pts[pts.length - 2];
-      if (!prev) return;
-      // Draw only the new segment incrementally (world transform is already active
-      // on the context from the last redrawAll call, so world coords draw correctly)
+      const n = pts.length;
+      if (n < 2) return;
+      // Incremental bezier: draw the latest quadratic segment.
+      // Each segment runs from midpoint(n-3,n-2) to midpoint(n-2,n-1) with
+      // pts[n-2] as the control point — matching the midpoint algorithm used
+      // in drawItem so live drawing closely matches the committed stroke.
       const ctx = getCtx();
       ctx.save();
       ctx.strokeStyle = colorRef.current;
@@ -1679,8 +1694,17 @@ export default function CanvasBoard({
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(prev.x, prev.y);
-      ctx.lineTo(pos.x, pos.y);
+      if (n === 2) {
+        ctx.moveTo(pts[0].x, pts[0].y);
+        ctx.lineTo(pts[1].x, pts[1].y);
+      } else {
+        const mx1 = (pts[n - 3].x + pts[n - 2].x) / 2;
+        const my1 = (pts[n - 3].y + pts[n - 2].y) / 2;
+        const mx2 = (pts[n - 2].x + pts[n - 1].x) / 2;
+        const my2 = (pts[n - 2].y + pts[n - 1].y) / 2;
+        ctx.moveTo(mx1, my1);
+        ctx.quadraticCurveTo(pts[n - 2].x, pts[n - 2].y, mx2, my2);
+      }
       ctx.stroke();
       ctx.restore();
     } else if (t === 'line' || t === 'rect' || t === 'circle') {
