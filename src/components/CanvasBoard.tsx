@@ -125,6 +125,63 @@ function constrainToSquare(x1: number, y1: number, x2: number, y2: number) {
   return { x2: x1 + size * (dx >= 0 ? 1 : -1), y2: y1 + size * (dy >= 0 ? 1 : -1) };
 }
 
+// ─── Shape recognition ────────────────────────────────────────────────────────
+
+type RecognizedShape =
+  | { kind: 'line'; x1: number; y1: number; x2: number; y2: number }
+  | { kind: 'circle'; x1: number; y1: number; x2: number; y2: number };
+
+function recognizeShape(points: { x: number; y: number }[]): RecognizedShape | null {
+  if (points.length < 8) return null;
+
+  const p0 = points[0];
+  const pN = points[points.length - 1];
+  const dx = pN.x - p0.x;
+  const dy = pN.y - p0.y;
+  const strokeLen = Math.sqrt(dx * dx + dy * dy);
+  if (strokeLen < 20) return null;
+
+  // ── Line: max perpendicular deviation < 12 % of chord length ─────────────
+  let maxDev = 0;
+  for (const p of points) {
+    const dev = Math.abs(dy * p.x - dx * p.y + pN.x * p0.y - pN.y * p0.x) / strokeLen;
+    if (dev > maxDev) maxDev = dev;
+  }
+  if (maxDev < strokeLen * 0.12) {
+    return { kind: 'line', x1: p0.x, y1: p0.y, x2: pN.x, y2: pN.y };
+  }
+
+  // ── Circle: uniform radius + roughly closed stroke ────────────────────────
+  let cx = 0,
+    cy = 0;
+  for (const p of points) {
+    cx += p.x;
+    cy += p.y;
+  }
+  cx /= points.length;
+  cy /= points.length;
+
+  const radii = points.map((p) => Math.sqrt((p.x - cx) ** 2 + (p.y - cy) ** 2));
+  const meanR = radii.reduce((a, b) => a + b, 0) / radii.length;
+  if (meanR < 10) return null;
+  const variance = radii.reduce((a, r) => a + (r - meanR) ** 2, 0) / radii.length;
+  const stdR = Math.sqrt(variance);
+
+  const closeDist = Math.sqrt((p0.x - pN.x) ** 2 + (p0.y - pN.y) ** 2);
+
+  if (stdR / meanR < 0.22 && closeDist < meanR * 1.1) {
+    return {
+      kind: 'circle',
+      x1: cx - meanR,
+      y1: cy - meanR,
+      x2: cx + meanR,
+      y2: cy + meanR,
+    };
+  }
+
+  return null;
+}
+
 // ─── Draw helpers ─────────────────────────────────────────────────────────────
 
 function drawItem(ctx: CanvasRenderingContext2D, item: DrawItem) {
@@ -1801,7 +1858,24 @@ export default function CanvasBoard({
       if (!currentPenRef.current) return;
       const stroke = currentPenRef.current;
       currentPenRef.current = null;
-      commit([...itemsRef.current, stroke]);
+      const recognized = recognizeShape(stroke.points);
+      if (recognized) {
+        commit([
+          ...itemsRef.current,
+          {
+            kind: recognized.kind,
+            id: crypto.randomUUID(),
+            color: stroke.color,
+            width: stroke.width,
+            x1: recognized.x1,
+            y1: recognized.y1,
+            x2: recognized.x2,
+            y2: recognized.y2,
+          },
+        ]);
+      } else {
+        commit([...itemsRef.current, stroke]);
+      }
     } else if (t === 'line' || t === 'rect' || t === 'circle') {
       const { x: x1, y: y1 } = startRef.current;
       let x2 = pos.x,
