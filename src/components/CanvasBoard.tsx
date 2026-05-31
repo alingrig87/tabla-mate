@@ -118,6 +118,13 @@ interface TextCursor {
   value: string;
 }
 
+function constrainToSquare(x1: number, y1: number, x2: number, y2: number) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const size = Math.min(Math.abs(dx), Math.abs(dy));
+  return { x2: x1 + size * (dx >= 0 ? 1 : -1), y2: y1 + size * (dy >= 0 ? 1 : -1) };
+}
+
 // ─── Draw helpers ─────────────────────────────────────────────────────────────
 
 function drawItem(ctx: CanvasRenderingContext2D, item: DrawItem) {
@@ -149,12 +156,11 @@ function drawItem(ctx: CanvasRenderingContext2D, item: DrawItem) {
     case 'circle': {
       const cx = (item.x1 + item.x2) / 2,
         cy = (item.y1 + item.y2) / 2;
-      const rx = Math.abs(item.x2 - item.x1) / 2,
-        ry = Math.abs(item.y2 - item.y1) / 2;
+      const r = Math.abs(item.x2 - item.x1) / 2;
       ctx.strokeStyle = item.color;
       ctx.lineWidth = item.width;
       ctx.beginPath();
-      ctx.ellipse(cx, cy, rx || 1, ry || 1, 0, 0, Math.PI * 2);
+      ctx.arc(cx, cy, r || 1, 0, Math.PI * 2);
       ctx.stroke();
       break;
     }
@@ -215,10 +221,9 @@ function drawShapePreview(
     case 'circle': {
       const cx = (s.x1 + s.x2) / 2,
         cy = (s.y1 + s.y2) / 2;
-      const rx = Math.abs(s.x2 - s.x1) / 2,
-        ry = Math.abs(s.y2 - s.y1) / 2;
+      const r = Math.abs(s.x2 - s.x1) / 2;
       ctx.beginPath();
-      ctx.ellipse(cx, cy, rx || 1, ry || 1, 0, 0, Math.PI * 2);
+      ctx.arc(cx, cy, r || 1, 0, Math.PI * 2);
       ctx.stroke();
       break;
     }
@@ -1541,6 +1546,7 @@ export default function CanvasBoard({
   }
 
   function pointerDown(e: React.PointerEvent) {
+    if (!e.isPrimary) return;
     closePopovers();
     (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
     const t = toolRef.current;
@@ -1678,8 +1684,14 @@ export default function CanvasBoard({
       ctx.stroke();
       ctx.restore();
     } else if (t === 'line' || t === 'rect' || t === 'circle') {
+      let { x: ex, y: ey } = pos;
+      if (t === 'rect' || t === 'circle') {
+        const c = constrainToSquare(startRef.current.x, startRef.current.y, ex, ey);
+        ex = c.x2;
+        ey = c.y2;
+      }
       redraw(undefined, {
-        shape: { kind: t, x1: startRef.current.x, y1: startRef.current.y, x2: pos.x, y2: pos.y },
+        shape: { kind: t, x1: startRef.current.x, y1: startRef.current.y, x2: ex, y2: ey },
         color: colorRef.current,
         width: penSizeRef.current,
       });
@@ -1768,7 +1780,14 @@ export default function CanvasBoard({
       commit([...itemsRef.current, stroke]);
     } else if (t === 'line' || t === 'rect' || t === 'circle') {
       const { x: x1, y: y1 } = startRef.current;
-      if (Math.abs(pos.x - x1) < 3 && Math.abs(pos.y - y1) < 3) {
+      let x2 = pos.x,
+        y2 = pos.y;
+      if (t === 'rect' || t === 'circle') {
+        const c = constrainToSquare(x1, y1, x2, y2);
+        x2 = c.x2;
+        y2 = c.y2;
+      }
+      if (Math.abs(x2 - x1) < 3 && Math.abs(y2 - y1) < 3) {
         redraw(); // discard tiny drag — restore clean canvas
         return;
       }
@@ -1781,8 +1800,8 @@ export default function CanvasBoard({
           width: penSizeRef.current,
           x1,
           y1,
-          x2: pos.x,
-          y2: pos.y,
+          x2,
+          y2,
         },
       ]);
     } else if (t === 'geom' && activeGeomRef.current) {
