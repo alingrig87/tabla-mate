@@ -205,19 +205,27 @@ function ob(ox: number, oy: number, lx: number, ly: number, lz: number): Pt {
   return [ox + lx + lz * DX, oy + ly - lz * DY];
 }
 
-function face3(ctx: CanvasRenderingContext2D, pts: Pt[], dashed = false) {
-  if (dashed) ctx.setLineDash([4, 4]);
+function face3(ctx: CanvasRenderingContext2D, pts: Pt[], hidden = false) {
+  ctx.save();
+  if (hidden) {
+    ctx.strokeStyle = HIDDEN;
+    ctx.setLineDash([4, 4]);
+  }
   poly(ctx, pts);
-  if (dashed) ctx.setLineDash([]);
+  ctx.restore();
 }
 
-function edge3(ctx: CanvasRenderingContext2D, a: Pt, b: Pt, dashed = false) {
-  if (dashed) ctx.setLineDash([4, 4]);
+function edge3(ctx: CanvasRenderingContext2D, a: Pt, b: Pt, hidden = false) {
+  ctx.save();
+  if (hidden) {
+    ctx.strokeStyle = HIDDEN;
+    ctx.setLineDash([4, 4]);
+  }
   ctx.beginPath();
   ctx.moveTo(a[0], a[1]);
   ctx.lineTo(b[0], b[1]);
   ctx.stroke();
-  if (dashed) ctx.setLineDash([]);
+  ctx.restore();
 }
 
 // ─── Decoration colour tokens ─────────────────────────────────────────────────
@@ -225,6 +233,7 @@ function edge3(ctx: CanvasRenderingContext2D, a: Pt, b: Pt, dashed = false) {
 const DEC_HEIGHT = '#dc2626'; // red   — altitudini
 const DEC_ANGLE = '#d97706'; // amber — unghiuri
 const DEC_LABEL = '#0f172a'; // dark  — etichete
+const HIDDEN = '#94a3b8'; // slate-gray — muchii ascunse (matches GeometriePage)
 const DEC_DIAG = '#16a34a'; // green — diagonale
 
 // ─── Decoration helpers ───────────────────────────────────────────────────────
@@ -1158,11 +1167,9 @@ export function drawGeom(
       face3(ctx, [B, Cv, Cp, Bp]);
       face3(ctx, [A, B, Bp, Ap]);
       // hidden edges
-      ctx.setLineDash([4, 4]);
-      edge3(ctx, A, D);
-      edge3(ctx, D, Cv);
-      edge3(ctx, D, Dp);
-      ctx.setLineDash([]);
+      edge3(ctx, A, D, true);
+      edge3(ctx, D, Cv, true);
+      edge3(ctx, D, Dp, true);
       if (style?.height) {
         // Space diagonals in red
         decAxis(ctx, A[0], A[1], Cp[0], Cp[1], lw);
@@ -1197,11 +1204,9 @@ export function drawGeom(
       face3(ctx, [Ap, Bp, Cp, Dp]);
       face3(ctx, [B, Cv, Cp, Bp]);
       face3(ctx, [A, B, Bp, Ap]);
-      ctx.setLineDash([4, 4]);
-      edge3(ctx, A, D);
-      edge3(ctx, D, Cv);
-      edge3(ctx, D, Dp);
-      ctx.setLineDash([]);
+      edge3(ctx, A, D, true);
+      edge3(ctx, D, Cv, true);
+      edge3(ctx, D, Dp, true);
       if (style?.height) {
         decAxis(ctx, A[0], A[1], Cp[0], Cp[1], lw); // space diagonal
       }
@@ -1231,12 +1236,9 @@ export function drawGeom(
       face3(ctx, [A, BR, BL]);
       face3(ctx, [A, Ap, BRp, BR]);
       face3(ctx, [BL, BR, BRp, BLp]);
-      ctx.setLineDash([4, 4]);
-      edge3(ctx, A, Ap, false); // visible, not hidden - but Ap is back
-      face3(ctx, [Ap, BRp, BLp]);
+      face3(ctx, [Ap, BRp, BLp], true);
       edge3(ctx, BL, BLp, true);
       edge3(ctx, A, Ap, true);
-      ctx.setLineDash([]);
       edge3(ctx, BR, BRp);
       if (style?.height) {
         decAxis(ctx, A[0], A[1], (BL[0] + BR[0]) / 2, (BL[1] + BR[1]) / 2, lw);
@@ -1268,11 +1270,9 @@ export function drawGeom(
       face3(ctx, [Ap, Bp, Cp, Dp]);
       face3(ctx, [B, Cv, Cp, Bp]);
       face3(ctx, [A, B, Bp, Ap]);
-      ctx.setLineDash([4, 4]);
-      edge3(ctx, A, D);
-      edge3(ctx, D, Cv);
-      edge3(ctx, D, Dp);
-      ctx.setLineDash([]);
+      edge3(ctx, A, D, true);
+      edge3(ctx, D, Cv, true);
+      edge3(ctx, D, Dp, true);
       if (style?.height) {
         decAxis(ctx, Bp[0], Bp[1], B[0], B[1], lw);
         if (style?.labels) decLabel(ctx, 'h', Bp[0] + fs, (Bp[1] + B[1]) / 2, DEC_HEIGHT, fs);
@@ -1298,9 +1298,7 @@ export function drawGeom(
       face3(ctx, frontS);
       face3(ctx, back);
       for (let i = 0; i <= 3; i++) edge3(ctx, frontS[i], back[i]);
-      ctx.setLineDash([4, 4]);
       for (let i = 4; i < 6; i++) edge3(ctx, frontS[i], back[i], true);
-      ctx.setLineDash([]);
       if (style?.labels) {
         decLabel(ctx, 's', frontS[2][0] + fs, frontS[2][1] + fs, color, fs);
         decLabel(
@@ -1366,10 +1364,8 @@ export function drawGeom(
       face3(ctx, [bl, br, br2, bl2]);
       face3(ctx, [bl, br, apex]);
       face3(ctx, [br, br2, apex]);
-      ctx.setLineDash([4, 4]);
       edge3(ctx, bl2, apex, true);
       edge3(ctx, bl, bl2, true);
-      ctx.setLineDash([]);
       face3(ctx, [bl2, br2, apex], true);
       if (style?.height) {
         decAxis(ctx, apex[0], apex[1], bCx, bCy, lw);
@@ -1418,13 +1414,11 @@ export function drawGeom(
       face3(ctx, [A, B, Bp, Ap]);
       face3(ctx, [B, Cv, Cp, Bp]);
       // hidden
-      ctx.setLineDash([4, 4]);
       edge3(ctx, A, D, true);
       edge3(ctx, D, Cv, true);
       edge3(ctx, D, Dp, true);
       edge3(ctx, Ap, Dp, true);
       edge3(ctx, Dp, Cp, true);
-      ctx.setLineDash([]);
       // centre axis
       const bCx2 = (A[0] + B[0] + Cv[0] + D[0]) / 4,
         bCy2 = (A[1] + B[1] + Cv[1] + D[1]) / 4;
@@ -1464,11 +1458,13 @@ export function drawGeom(
       ctx.moveTo(apex[0], apex[1]);
       ctx.lineTo(cx + s, botY);
       ctx.stroke();
+      ctx.save();
+      ctx.strokeStyle = HIDDEN;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.ellipse(cx, botY, s, s * 0.32, 0, Math.PI, Math.PI * 2);
       ctx.stroke();
-      ctx.setLineDash([]);
+      ctx.restore();
       if (style?.height) {
         decAxis(ctx, cx, cy - h, cx, botY, lw);
         if (style?.labels) decLabel(ctx, 'h', cx + fs * 1.0, cy - h * 0.4, DEC_HEIGHT, fs);
@@ -1507,11 +1503,13 @@ export function drawGeom(
       ctx.moveTo(cx + s1, botY2);
       ctx.lineTo(cx + s2, topY);
       ctx.stroke();
+      ctx.save();
+      ctx.strokeStyle = HIDDEN;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.ellipse(cx, botY2, s1, s1 * 0.32, 0, Math.PI, Math.PI * 2);
       ctx.stroke();
-      ctx.setLineDash([]);
+      ctx.restore();
       if (style?.height) {
         decAxis(ctx, cx, topY, cx, botY2, lw);
         if (style?.labels) decLabel(ctx, 'h', cx + fs, (topY + botY2) / 2, DEC_HEIGHT, fs);
@@ -1545,11 +1543,13 @@ export function drawGeom(
       ctx.beginPath();
       ctx.ellipse(cx, botY3, s, s * 0.32, 0, 0, Math.PI);
       ctx.stroke();
+      ctx.save();
+      ctx.strokeStyle = HIDDEN;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.ellipse(cx, botY3, s, s * 0.32, 0, Math.PI, Math.PI * 2);
       ctx.stroke();
-      ctx.setLineDash([]);
+      ctx.restore();
       ctx.beginPath();
       ctx.moveTo(cx - s, topY2);
       ctx.lineTo(cx - s, botY3);
@@ -1584,6 +1584,8 @@ export function drawGeom(
       ctx.beginPath();
       ctx.ellipse(cx, cy, r, r * 0.32, 0, 0, Math.PI);
       ctx.stroke();
+      ctx.save();
+      ctx.strokeStyle = HIDDEN;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.ellipse(cx, cy, r, r * 0.32, 0, Math.PI, Math.PI * 2);
@@ -1591,7 +1593,7 @@ export function drawGeom(
       ctx.beginPath();
       ctx.ellipse(cx, cy, r * 0.32, r, 0, 0, Math.PI * 2);
       ctx.stroke();
-      ctx.setLineDash([]);
+      ctx.restore();
       if (style?.labels) {
         decAxis(ctx, cx - r, cy, cx + r, cy, lw);
         decDot(ctx, cx, cy, Math.max(2, lw * 1.5));
