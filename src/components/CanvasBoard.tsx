@@ -932,6 +932,9 @@ export default function CanvasBoard({
   // Prevents the Firestore echo from double-adding our own strokes.
   const pendingUploadIds = useRef<Set<string>>(new Set());
 
+  // Firestore sync error — shown as a dismissible banner when collaboration fails
+  const [syncError, setSyncError] = useState<string | null>(null);
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [tool, setTool] = useState<PenTool>('pen');
@@ -1359,24 +1362,34 @@ export default function CanvasBoard({
   //   2. Keep locally-pending items (uploaded but not yet confirmed) to avoid flicker
   useEffect(() => {
     if (!boardId) return;
-    const unsub = subscribeToBoardItems(boardId, (remoteItems) => {
-      setItems((prev) => {
-        const remoteIds = new Set(remoteItems.map((ri) => ri.id));
+    const unsub = subscribeToBoardItems(
+      boardId,
+      (remoteItems) => {
+        setSyncError(null); // clear any previous error on successful update
+        setItems((prev) => {
+          const remoteIds = new Set(remoteItems.map((ri) => ri.id));
 
-        // Locally-pending: written to Firestore but not yet in this snapshot
-        const pending = prev.filter(
-          (item) => item.id && !remoteIds.has(item.id) && pendingUploadIds.current.has(item.id)
-        );
+          // Locally-pending: written to Firestore but not yet confirmed by snapshot
+          const pending = prev.filter(
+            (item) => item.id && !remoteIds.has(item.id) && pendingUploadIds.current.has(item.id)
+          );
 
-        // Convert remote items back to DrawItem (strip authorId — canvas doesn't need it)
-        const fromRemote = remoteItems.map(
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          ({ id, authorId: _a, ...data }) => ({ ...data, id }) as DrawItem
-        );
+          // Local-only: ImageItems (PDFs) are never synced to Firestore — preserve them
+          const localOnly = prev.filter((item) => item.kind === 'image');
 
-        return [...fromRemote, ...pending];
-      });
-    });
+          // Convert remote items back to DrawItem (strip authorId — canvas doesn't need it)
+          const fromRemote = remoteItems.map(
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            ({ id, authorId: _a, ...data }) => ({ ...data, id }) as DrawItem
+          );
+
+          return [...fromRemote, ...pending, ...localOnly];
+        });
+      },
+      (err) => {
+        setSyncError(`Colaborare indisponibilă: ${err.message}`);
+      }
+    );
     return unsub;
   }, [boardId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1965,6 +1978,46 @@ export default function CanvasBoard({
         onPointerUp={pointerUp}
         onPointerLeave={pointerLeave}
       />
+
+      {/* ── Sync error banner ─────────────────────────────────────────── */}
+      {syncError && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 12,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#fef2f2',
+            border: '1px solid #fca5a5',
+            color: '#b91c1c',
+            borderRadius: 8,
+            padding: '8px 14px',
+            fontSize: 13,
+            fontFamily: 'sans-serif',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+          }}
+        >
+          <span>{syncError}</span>
+          <button
+            onClick={() => setSyncError(null)}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: 16,
+              lineHeight: 1,
+              color: '#b91c1c',
+              padding: 0,
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* ── Floating toolbar ──────────────────────────────────────────── */}
       {/* maxWidth + overflowX: hidden scrollbar on narrow screens (toolbar-scroll class) */}
