@@ -96,11 +96,20 @@ export default function SharePanel({ boardId, boardTitle, onClose }: Props): JSX
         user.uid,
         user.displayName ?? user.email ?? 'Cineva'
       );
-      setSendOk(`Invitație trimisă către ${email}`);
+      setSendOk(`Invitație salvată! Trimite email-ul care s-a deschis.`);
       setEmailInput('');
       refreshInvites();
+
+      // Open the user's email client with a pre-composed message
+      const boardUrl = getShareUrl(boardId);
+      const inviterName = user.displayName ?? user.email ?? 'Cineva';
+      const subject = encodeURIComponent(`Invitație la tabla colaborativă: ${boardTitle}`);
+      const body = encodeURIComponent(
+        `Salut,\n\n${inviterName} te invită să colaborezi pe tabla „${boardTitle}".\n\nIntră pe link:\n${boardUrl}\n\n(Este nevoie de un cont Google pentru a salva desenele.)`
+      );
+      window.open(`mailto:${email}?subject=${subject}&body=${body}`, '_blank');
     } catch {
-      setSendError('Nu am putut trimite invitația. Încearcă din nou.');
+      setSendError('Nu am putut salva invitația. Încearcă din nou.');
     } finally {
       setSending(false);
     }
