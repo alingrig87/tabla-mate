@@ -47,20 +47,28 @@ export interface RemoteItem {
 // Items are ordered by server timestamp (insertion order).
 export function subscribeToBoardItems(
   boardId: string,
-  onUpdate: (items: RemoteItem[]) => void
+  onUpdate: (items: RemoteItem[]) => void,
+  onError?: (err: Error) => void
 ): Unsubscribe {
   const q = query(collection(db, 'boards', boardId, 'items'), orderBy('createdAt', 'asc'));
 
-  return onSnapshot(q, (snap) => {
-    const items: RemoteItem[] = [];
-    snap.forEach((d) => {
-      // Strip server-only metadata fields before passing to the canvas
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { createdAt: _ts, ...rest } = d.data();
-      items.push({ id: d.id, ...rest } as RemoteItem);
-    });
-    onUpdate(items);
-  });
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items: RemoteItem[] = [];
+      snap.forEach((d) => {
+        // Strip server-only metadata fields before passing to the canvas
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { createdAt: _ts, ...rest } = d.data();
+        items.push({ id: d.id, ...rest } as RemoteItem);
+      });
+      onUpdate(items);
+    },
+    (err) => {
+      console.error('[boardSync] onSnapshot error:', err);
+      onError?.(err);
+    }
+  );
 }
 
 // Write a single DrawItem to Firestore.
