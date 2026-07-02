@@ -1014,16 +1014,24 @@ export default function CanvasBoard({
   }, [activeGeom]);
   const [showShapes, setShowShapes] = useState(false);
 
-  // GeomStyle decoration toggles — controls height, angle arc, labels, diagonal
-  const [geomStyle, setGeomStyle] = useState<GeomStyle>({
-    height: true,
-    angle: true,
-    labels: true,
-    diagonal: true,
+  // GeomStyle decoration toggles — off by default; persisted to localStorage
+  const [geomStyle, setGeomStyle] = useState<GeomStyle>(() => {
+    try {
+      const saved = localStorage.getItem('geomStyle');
+      if (saved) return JSON.parse(saved) as GeomStyle; // eslint-disable-line @typescript-eslint/no-unsafe-return
+    } catch (_e) {
+      /* ignore parse errors */
+    }
+    return { height: false, angle: false, labels: false, diagonal: false };
   });
   const geomStyleRef = useRef<GeomStyle>(geomStyle);
   useEffect(() => {
     geomStyleRef.current = geomStyle;
+    try {
+      localStorage.setItem('geomStyle', JSON.stringify(geomStyle));
+    } catch (_e) {
+      /* ignore */
+    }
   }, [geomStyle]);
 
   // Panel visibility
