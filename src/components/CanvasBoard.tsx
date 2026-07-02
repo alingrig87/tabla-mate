@@ -16,7 +16,17 @@ import SharePanel from './SharePanel';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type PenTool = 'pen' | 'eraser' | 'line' | 'rect' | 'circle' | 'text' | 'geom' | 'move' | 'select';
+type PenTool =
+  | 'pen'
+  | 'eraser'
+  | 'line'
+  | 'dashed-line'
+  | 'rect'
+  | 'circle'
+  | 'text'
+  | 'geom'
+  | 'move'
+  | 'select';
 
 type Point = { x: number; y: number };
 
@@ -37,6 +47,7 @@ interface ShapeItem {
   y1: number;
   x2: number;
   y2: number;
+  dashed?: boolean;
 }
 
 interface TextItem {
@@ -108,6 +119,7 @@ interface ShapePreview {
   y1: number;
   x2: number;
   y2: number;
+  dashed?: boolean;
 }
 
 interface TextCursor {
@@ -213,6 +225,7 @@ function drawItem(ctx: CanvasRenderingContext2D, item: DrawItem) {
       ctx.strokeStyle = item.color;
       ctx.lineWidth = item.width;
       ctx.lineCap = 'round';
+      if (item.dashed) ctx.setLineDash([10, 6]);
       ctx.beginPath();
       ctx.moveTo(item.x1, item.y1);
       ctx.lineTo(item.x2, item.y2);
@@ -276,7 +289,7 @@ function drawShapePreview(
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = width;
-  ctx.setLineDash([6, 4]);
+  ctx.setLineDash(s.dashed ? [10, 6] : [6, 4]);
   switch (s.kind) {
     case 'line':
       ctx.lineCap = 'round';
@@ -693,6 +706,11 @@ const IconHome = () => (
     <polyline points="9 22 9 12 15 12 15 22" />
   </svg>
 );
+const IconDashedLine = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    <line x1="5" y1="19" x2="19" y2="5" strokeDasharray="3 2.5" />
+  </svg>
+);
 const IconClearAll = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
     <polyline points="3 6 5 6 21 6" />
@@ -795,7 +813,7 @@ function PillBtn({
 
   function showTip() {
     const r = btnRef.current?.getBoundingClientRect();
-    if (r) setTipPos({ x: r.left + r.width / 2, y: r.top });
+    if (r) setTipPos({ x: r.left + r.width / 2, y: r.bottom });
   }
 
   return (
@@ -841,8 +859,8 @@ function PillBtn({
             style={{
               position: 'fixed',
               left: tipPos.x,
-              top: tipPos.y - 8,
-              transform: 'translate(-50%, -100%)',
+              top: tipPos.y + 8,
+              transform: 'translate(-50%, 0)',
               background: '#1a1a1a',
               color: '#fff',
               padding: '5px 9px',
@@ -855,19 +873,19 @@ function PillBtn({
               letterSpacing: '0.01em',
             }}
           >
-            {title}
-            {/* Arrow */}
+            {/* Arrow pointing up */}
             <div
               style={{
                 position: 'absolute',
-                top: '100%',
+                bottom: '100%',
                 left: '50%',
                 transform: 'translateX(-50%)',
                 borderLeft: '5px solid transparent',
                 borderRight: '5px solid transparent',
-                borderTop: '5px solid #1a1a1a',
+                borderBottom: '5px solid #1a1a1a',
               }}
             />
+            {title}
           </div>,
           document.body
         )}
@@ -1803,7 +1821,7 @@ export default function CanvasBoard({
       }
       ctx.stroke();
       ctx.restore();
-    } else if (t === 'line' || t === 'rect' || t === 'circle') {
+    } else if (t === 'line' || t === 'dashed-line' || t === 'rect' || t === 'circle') {
       let { x: ex, y: ey } = pos;
       if (t === 'rect' || t === 'circle') {
         const c = constrainToSquare(startRef.current.x, startRef.current.y, ex, ey);
@@ -1811,7 +1829,14 @@ export default function CanvasBoard({
         ey = c.y2;
       }
       redraw(undefined, {
-        shape: { kind: t, x1: startRef.current.x, y1: startRef.current.y, x2: ex, y2: ey },
+        shape: {
+          kind: t === 'dashed-line' ? 'line' : t,
+          x1: startRef.current.x,
+          y1: startRef.current.y,
+          x2: ex,
+          y2: ey,
+          dashed: t === 'dashed-line',
+        },
         color: colorRef.current,
         width: penSizeRef.current,
       });
@@ -1915,7 +1940,7 @@ export default function CanvasBoard({
       } else {
         commit([...itemsRef.current, stroke]);
       }
-    } else if (t === 'line' || t === 'rect' || t === 'circle') {
+    } else if (t === 'line' || t === 'dashed-line' || t === 'rect' || t === 'circle') {
       const { x: x1, y: y1 } = startRef.current;
       let x2 = pos.x,
         y2 = pos.y;
@@ -1931,7 +1956,7 @@ export default function CanvasBoard({
       commit([
         ...itemsRef.current,
         {
-          kind: t,
+          kind: t === 'dashed-line' ? 'line' : t,
           id: crypto.randomUUID(),
           color: colorRef.current,
           width: penSizeRef.current,
@@ -1939,6 +1964,7 @@ export default function CanvasBoard({
           y1,
           x2,
           y2,
+          ...(t === 'dashed-line' && { dashed: true }),
         },
       ]);
     } else if (t === 'geom' && activeGeomRef.current) {
@@ -2148,22 +2174,29 @@ export default function CanvasBoard({
         }}
       >
         {/* Drawing tools */}
-        <PillBtn active={tool === 'pen'} onClick={() => setTool('pen')} title="Pen (P)">
+        <PillBtn active={tool === 'pen'} onClick={() => setTool('pen')} title="Creion (P)">
           <IconPen />
         </PillBtn>
-        <PillBtn active={tool === 'eraser'} onClick={() => setTool('eraser')} title="Eraser (E)">
+        <PillBtn active={tool === 'eraser'} onClick={() => setTool('eraser')} title="Radieră (E)">
           <IconEraser />
         </PillBtn>
         <PillBtn onClick={handleClearAll} title="Șterge tot (Del)">
           <IconClearAll />
         </PillBtn>
-        <PillBtn active={tool === 'line'} onClick={() => setTool('line')} title="Line (L)">
+        <PillBtn active={tool === 'line'} onClick={() => setTool('line')} title="Linie (L)">
           <IconLine />
         </PillBtn>
-        <PillBtn active={tool === 'rect'} onClick={() => setTool('rect')} title="Rectangle (R)">
+        <PillBtn
+          active={tool === 'dashed-line'}
+          onClick={() => setTool('dashed-line')}
+          title="Linie punctată"
+        >
+          <IconDashedLine />
+        </PillBtn>
+        <PillBtn active={tool === 'rect'} onClick={() => setTool('rect')} title="Pătrat (R)">
           <IconRect />
         </PillBtn>
-        <PillBtn active={tool === 'circle'} onClick={() => setTool('circle')} title="Ellipse (E)">
+        <PillBtn active={tool === 'circle'} onClick={() => setTool('circle')} title="Cerc (C)">
           <IconCircle />
         </PillBtn>
         <PillBtn active={tool === 'text'} onClick={() => setTool('text')} title="Text (T)">
@@ -2175,25 +2208,25 @@ export default function CanvasBoard({
             setTool('geom');
             setShowShapes((v) => !v);
           }}
-          title="Shapes"
+          title="Figuri geometrice"
         >
           <IconShapes />
         </PillBtn>
         <PillBtn
           active={tool === 'select'}
           onClick={() => setTool('select')}
-          title="Select & Move item (S)"
+          title="Selectează & mută (S)"
         >
           <IconSelect />
         </PillBtn>
-        <PillBtn active={tool === 'move'} onClick={() => setTool('move')} title="Pan canvas (V)">
+        <PillBtn active={tool === 'move'} onClick={() => setTool('move')} title="Mișcă tabla (V)">
           <IconMove />
         </PillBtn>
 
         <Divider />
 
         {/* Paste image button — triggers clipboard read via Clipboard API */}
-        <PillBtn onClick={pasteFromClipboard} title="Paste image (Ctrl+V)">
+        <PillBtn onClick={pasteFromClipboard} title="Lipește imagine (Ctrl+V)">
           <IconPaste />
         </PillBtn>
         {/* PDF import button — opens panel with preset exams + file picker */}
@@ -2264,27 +2297,27 @@ export default function CanvasBoard({
         <Divider />
 
         {/* History */}
-        <PillBtn disabled={!canUndo} onClick={undo} title="Undo (Ctrl+Z)">
+        <PillBtn disabled={!canUndo} onClick={undo} title="Anulează (Ctrl+Z)">
           <IconUndo />
         </PillBtn>
-        <PillBtn disabled={!canRedo} onClick={redo} title="Redo (Ctrl+Y)">
+        <PillBtn disabled={!canRedo} onClick={redo} title="Refă (Ctrl+Y)">
           <IconRedo />
         </PillBtn>
 
         {/* Navigation buttons — only rendered when the parent provides the callbacks */}
         {(onOpenSubiecte || onOpenFormulas) && <Divider />}
         {onOpenSubiecte && (
-          <PillBtn onClick={onOpenSubiecte} title="Subiecte EN VIII (2022–2026)">
+          <PillBtn onClick={onOpenSubiecte} title="Subiecte Evaluare Națională VIII">
             <IconSubiecte />
           </PillBtn>
         )}
         {onOpenGeometrie && (
-          <PillBtn onClick={onOpenGeometrie} title="Figuri geometrice — arii & volume">
+          <PillBtn onClick={onOpenGeometrie} title="Geometrie — arii & volume">
             <IconGeometrie />
           </PillBtn>
         )}
         {onOpenFormulas && (
-          <PillBtn onClick={onOpenFormulas} title="Formule matematice (IX–XII)">
+          <PillBtn onClick={onOpenFormulas} title="Formule matematice IX–XII">
             <IconFormulas />
           </PillBtn>
         )}
@@ -2325,7 +2358,7 @@ export default function CanvasBoard({
             Not logged in → Google login popup.
             Logged in     → opens ProfilePage (logout is inside profile).    */}
         {!authUser ? (
-          <PillBtn onClick={loginWithGoogle} title="Login cu Google (opțional)">
+          <PillBtn onClick={loginWithGoogle} title="Conectare cu Google">
             <IconUser />
           </PillBtn>
         ) : (
@@ -2844,7 +2877,7 @@ export default function CanvasBoard({
           zIndex: 10,
         }}
       >
-        <PillBtn onClick={zoomIn} title="Zoom in (+)">
+        <PillBtn onClick={zoomIn} title="Mărește (+)">
           <IconZoomIn />
         </PillBtn>
         {/* Zoom percentage label — updates via zoom state */}
@@ -2860,11 +2893,11 @@ export default function CanvasBoard({
         >
           {Math.round(zoom * 100)}%
         </div>
-        <PillBtn onClick={zoomOut} title="Zoom out (-)">
+        <PillBtn onClick={zoomOut} title="Micșorează (-)">
           <IconZoomOut />
         </PillBtn>
         <div style={{ width: 20, height: 1, background: '#e0e0e0', margin: '4px 0' }} />
-        <PillBtn onClick={resetView} title="Reset view (0)">
+        <PillBtn onClick={resetView} title="Resetează vedere (0)">
           <IconHome />
         </PillBtn>
       </div>
