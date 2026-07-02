@@ -823,20 +823,6 @@ const IconShare = () => (
     <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
   </svg>
 );
-const IconShareOk = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="#22c55e"
-    strokeWidth="2.5"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <polyline points="20 6 9 17 4 12" />
-  </svg>
-);
 const IconUser = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
@@ -1021,7 +1007,6 @@ export default function CanvasBoard({
   }, [boardId]);
 
   const [showSharePanel, setShowSharePanel] = useState(false);
-  const [shareCopied, setShareCopied] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   // Human-readable title for this board — shown in invite notifications
   const [boardTitle, setBoardTitle] = useState<string>(() => {
@@ -1611,31 +1596,6 @@ export default function CanvasBoard({
       console.error('[Board] create error:', err);
       // Non-blocking error — board is usable locally; sync may catch up later
     });
-  }
-
-  // One-click share: native share sheet on mobile, clipboard copy on desktop.
-  // If no board exists yet, creates one first then shares.
-  async function handleShare() {
-    const bid = boardId;
-    if (!bid) {
-      createAndJoinBoard();
-      return; // board ID will be set on next render; user can click again
-    }
-    const url = new URL(window.location.href);
-    url.searchParams.set('board', bid);
-    const shareUrl = url.toString();
-
-    if (navigator.share) {
-      try {
-        await navigator.share({ title: boardTitle, url: shareUrl });
-        return;
-      } catch (_e) {
-        /* user cancelled native share — fall through to clipboard */
-      }
-    }
-    await navigator.clipboard.writeText(shareUrl).catch(() => {});
-    setShareCopied(true);
-    setTimeout(() => setShareCopied(false), 2000);
   }
 
   function commit(next: DrawItem[]) {
@@ -2485,23 +2445,24 @@ export default function CanvasBoard({
         <Divider />
 
         {/* ── Share button ─────────────────────────────────────────────────
-            1 click = copy link to clipboard (or native share on mobile).
-            Secondary "👤" button = open invite panel.                       */}
-        <div style={{ position: 'relative', flexShrink: 0, display: 'flex', gap: 2 }}>
+            Creates a new board (or shows the existing link) for collaborative
+            drawing. A green live-dot appears on the button when a board is
+            active to indicate collaborative mode.                            */}
+        <div style={{ position: 'relative', flexShrink: 0 }}>
           <PillBtn
-            active={shareCopied}
-            onClick={handleShare}
-            title={boardId ? 'Copiază linkul tablei' : 'Creează tablă colaborativă'}
+            active={showSharePanel}
+            onClick={boardId ? () => setShowSharePanel((v) => !v) : createAndJoinBoard}
+            title={boardId ? 'Link tablă colaborativă' : 'Creează tablă colaborativă'}
           >
-            {shareCopied ? <IconShareOk /> : <IconShare />}
+            <IconShare />
           </PillBtn>
-          {/* Green live-dot when collaborative mode is active */}
-          {boardId && !shareCopied && (
+          {/* Green dot: collaborative mode is active */}
+          {boardId && (
             <span
               style={{
                 position: 'absolute',
                 top: 4,
-                right: 28,
+                right: 4,
                 width: 8,
                 height: 8,
                 borderRadius: '50%',
@@ -2510,44 +2471,6 @@ export default function CanvasBoard({
                 pointerEvents: 'none',
               }}
             />
-          )}
-          {/* Secondary button: open invite / manage panel */}
-          {boardId && (
-            <button
-              onClick={() => setShowSharePanel((v) => !v)}
-              title="Invită colaboratori"
-              style={{
-                width: 22,
-                height: 34,
-                borderRadius: 8,
-                border: 'none',
-                background: showSharePanel ? '#e0e7ff' : 'transparent',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 11,
-                color: '#6366f1',
-                padding: 0,
-                flexShrink: 0,
-              }}
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <line x1="19" y1="8" x2="19" y2="14" />
-                <line x1="22" y1="11" x2="16" y2="11" />
-              </svg>
-            </button>
           )}
         </div>
 
