@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Board background -->
+  <rect width="32" height="32" rx="7" fill="#3b82f6"/>
+  <!-- White drawn stroke (diagonal line) -->
+  <path d="M8 24 L22 10" stroke="white" stroke-width="3" stroke-linecap="round"/>
+  <!-- Yellow pencil tip at stroke start -->
+  <circle cx="8" cy="24" r="2.8" fill="#fbbf24"/>
+  <!-- Second stroke hint (math / parallel lines) -->
+  <path d="M17 24 L24 17" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.55"/>
+</svg>

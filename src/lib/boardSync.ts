@@ -148,6 +148,49 @@ export async function getBoardMeta(boardId: string): Promise<BoardMeta | null> {
   };
 }
 
+// ─── Presence ────────────────────────────────────────────────────────────────
+// Tracks each connected user's cursor position in real-time.
+// Stored at: boards/{boardId}/presence/{userId}
+// Each document is written by the user themselves and deleted on tab close.
+
+export interface PresenceEntry {
+  uid: string;
+  x: number;
+  y: number;
+  name: string;
+  color: string;
+  photoURL?: string;
+}
+
+export function updatePresence(
+  boardId: string,
+  userId: string,
+  data: Omit<PresenceEntry, 'uid'>
+): void {
+  setDoc(doc(db, 'boards', boardId, 'presence', userId), data).catch(() => {});
+}
+
+export function deletePresence(boardId: string, userId: string): void {
+  deleteDoc(doc(db, 'boards', boardId, 'presence', userId)).catch(() => {});
+}
+
+export function subscribeToPresence(
+  boardId: string,
+  selfId: string,
+  onUpdate: (entries: PresenceEntry[]) => void
+): Unsubscribe {
+  return onSnapshot(collection(db, 'boards', boardId, 'presence'), (snap) => {
+    const entries: PresenceEntry[] = [];
+    snap.forEach((d) => {
+      if (d.id === selfId) return; // skip own entry
+      entries.push({ uid: d.id, ...(d.data() as Omit<PresenceEntry, 'uid'>) });
+    });
+    onUpdate(entries);
+  });
+}
+
+// ─── Board CRUD ───────────────────────────────────────────────────────────────
+
 // Delete a board and ALL its items (Firestore doesn't cascade deletes).
 export async function deleteBoard(boardId: string): Promise<void> {
   const itemsSnap = await getDocs(collection(db, 'boards', boardId, 'items'));

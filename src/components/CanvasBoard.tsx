@@ -11,7 +11,11 @@ import {
   createBoard,
   getBoardMeta,
   getBoardsByUser,
+  updatePresence,
+  deletePresence,
+  subscribeToPresence,
 } from '../lib/boardSync';
+import type { PresenceEntry } from '../lib/boardSync';
 import SharePanel from './SharePanel';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -85,6 +89,24 @@ interface ImageItem {
 
 type DrawItem = PenItem | ShapeItem | TextItem | GeomItem | ImageItem;
 
+// ─── Presence colors ─────────────────────────────────────────────────────────
+// Deterministic color per user UID so the same user always gets the same color.
+const PRESENCE_COLORS = [
+  '#ef4444',
+  '#f97316',
+  '#eab308',
+  '#22c55e',
+  '#3b82f6',
+  '#8b5cf6',
+  '#ec4899',
+  '#06b6d4',
+];
+function uidColor(uid: string): string {
+  let h = 0;
+  for (let i = 0; i < uid.length; i++) h = ((h << 5) - h + uid.charCodeAt(i)) | 0;
+  return PRESENCE_COLORS[Math.abs(h) % PRESENCE_COLORS.length];
+}
+
 // ─── Image cache ──────────────────────────────────────────────────────────────
 // Module-level Map: persists across renders (unlike useState) and across undo
 // snapshots. When an ImageItem is drawn, its HTMLImageElement is looked up here.
@@ -99,14 +121,14 @@ let _lastPan: Point = { x: 0, y: 0 };
 let _lastScale = 1;
 // Selection box — preserved so image onLoad callbacks can restore it.
 let _lastSelectionBox: { x: number; y: number; w: number; h: number } | undefined;
+// Remote cursors — preserved so image onLoad callbacks can re-draw them.
+let _lastRemoteCursors: PresenceEntry[] = [];
 
 function preloadImg(item: ImageItem): HTMLImageElement {
   if (_imgCache.has(item.id)) return _imgCache.get(item.id)!;
   const img = new Image();
   img.onload = () => {
     // Re-draw with the most recent render parameters once the image has decoded.
-    // This fires asynchronously — the ref snapshot is stale-safe because nothing
-    // mutates _last* between the preload call and this callback.
     if (_lastCtx)
       redrawAll(
         _lastCtx,
@@ -115,7 +137,8 @@ function preloadImg(item: ImageItem): HTMLImageElement {
         _lastScale,
         undefined,
         undefined,
-        _lastSelectionBox
+        _lastSelectionBox,
+        _lastRemoteCursors
       );
   };
   img.src = item.dataURL;
@@ -340,7 +363,8 @@ function redrawAll(
     width: number;
     style?: GeomStyle;
   },
-  selectionBox?: { x: number; y: number; w: number; h: number }
+  selectionBox?: { x: number; y: number; w: number; h: number },
+  remoteCursors?: PresenceEntry[]
 ) {
   // Snapshot render args so image onLoad callbacks can re-trigger drawing
   _lastCtx = ctx;
@@ -348,6 +372,7 @@ function redrawAll(
   _lastPan = pan;
   _lastScale = scale;
   _lastSelectionBox = selectionBox;
+  _lastRemoteCursors = remoteCursors ?? [];
   const dpr = window.devicePixelRatio || 1;
   // Reset to device-pixel space to clear the full physical canvas
   ctx.resetTransform();
@@ -397,6 +422,36 @@ function redrawAll(
     }
     ctx.restore();
   }
+  // Remote cursors — drawn in world-space with screen-stable size
+  if (remoteCursors?.length) {
+    ctx.save();
+    const r = 5 / scale;
+    const fs = 11 / scale;
+    const pad = 3 / scale;
+    for (const c of remoteCursors) {
+      // Dot
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = c.color;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      // Name label
+      ctx.font = `bold ${fs}px sans-serif`;
+      const firstName = c.name.split(' ')[0] || 'Anonim';
+      const tw = ctx.measureText(firstName).width;
+      const lx = c.x + r + pad;
+      const ly = c.y - fs / 2 - pad;
+      ctx.globalAlpha = 0.88;
+      ctx.fillStyle = c.color;
+      ctx.fillRect(lx, ly, tw + pad * 2, fs + pad * 2);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#fff';
+      ctx.textBaseline = 'top';
+      ctx.fillText(firstName, lx + pad, ly + pad);
+    }
+    ctx.restore();
+  }
+
   // Note: transform is left active so incremental pen strokes drawn immediately
   // after redrawAll (in pointerMove) are correctly placed in world space.
 }
@@ -963,6 +1018,19 @@ export default function CanvasBoard({
   // Prevents the Firestore echo from double-adding our own strokes.
   const pendingUploadIds = useRef<Set<string>>(new Set());
 
+  // Presence: stable session ID for anonymous users (one per browser tab)
+  const sessionIdRef = useRef(crypto.randomUUID());
+  const myUid = authUser?.uid ?? sessionIdRef.current;
+  const myColor = uidColor(myUid);
+
+  // Remote cursors from other users in the same collaborative board
+  const remoteCursorsRef = useRef<PresenceEntry[]>([]);
+  // State mirror — needed for JSX re-renders (ref alone doesn't trigger them)
+  const [onlineUsers, setOnlineUsers] = useState<PresenceEntry[]>([]);
+
+  // Throttle cursor publish to ~80ms so we don't spam Firestore on every pointermove
+  const presenceThrottleRef = useRef(0);
+
   // Firestore sync error — shown as a dismissible banner when collaboration fails
   const [syncError, setSyncError] = useState<string | null>(null);
 
@@ -1145,7 +1213,8 @@ export default function CanvasBoard({
       scaleRef.current,
       preview,
       geomPreview,
-      selBox
+      selBox,
+      remoteCursorsRef.current
     );
   }
 
@@ -1440,6 +1509,23 @@ export default function CanvasBoard({
     );
     return unsub;
   }, [boardId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Presence subscription ─────────────────────────────────────────────────
+  // Subscribe to other users' cursors; delete own presence on cleanup/boardId change.
+  useEffect(() => {
+    if (!boardId) return;
+    const unsub = subscribeToPresence(boardId, myUid, (entries) => {
+      remoteCursorsRef.current = entries;
+      setOnlineUsers(entries);
+      redraw();
+    });
+    return () => {
+      unsub();
+      deletePresence(boardId, myUid);
+      remoteCursorsRef.current = [];
+      setOnlineUsers([]);
+    };
+  }, [boardId, myUid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auto-save: join last board when logged in ─────────────────────────────
   // When a logged-in user opens the app without a ?board= URL param, we silently
@@ -1768,6 +1854,21 @@ export default function CanvasBoard({
     const pos = getPos(e);
     const sp = getScreenPos(e);
     const t = toolRef.current;
+
+    // Publish own cursor position to Firestore (throttled)
+    if (boardIdRef.current) {
+      const now = Date.now();
+      if (now - presenceThrottleRef.current > 80) {
+        presenceThrottleRef.current = now;
+        updatePresence(boardIdRef.current, myUid, {
+          x: pos.x,
+          y: pos.y,
+          name: authUser?.displayName ?? 'Anonim',
+          color: myColor,
+          ...(authUser?.photoURL ? { photoURL: authUser.photoURL } : {}),
+        });
+      }
+    }
 
     // Select tool: drag to move the selected item in real-time
     if (t === 'select') {
@@ -2541,6 +2642,49 @@ export default function CanvasBoard({
           boardTitle={boardTitle}
           onClose={() => setShowSharePanel(false)}
         />
+      )}
+
+      {/* ── Online users indicator ──────────────────────────────────────
+          Shows colored initials of other users currently on the board.         */}
+      {boardId && onlineUsers.length > 0 && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 48,
+            right: 16,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            gap: 4,
+            zIndex: 5,
+            pointerEvents: 'none',
+          }}
+        >
+          {onlineUsers.map((c) => (
+            <div
+              key={c.uid}
+              title={c.name}
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: '50%',
+                background: c.color,
+                border: '2px solid #fff',
+                boxShadow: '0 1px 4px rgba(0,0,0,0.18)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#fff',
+                fontSize: 11,
+                fontWeight: 700,
+                fontFamily: 'sans-serif',
+                userSelect: 'none',
+              }}
+            >
+              {c.name.charAt(0).toUpperCase()}
+            </div>
+          ))}
+        </div>
       )}
 
       {/* ── Auto-save indicator ──────────────────────────────────────────
