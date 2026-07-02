@@ -930,6 +930,7 @@ export default function CanvasBoard({
   }, [boardId]);
 
   const [showSharePanel, setShowSharePanel] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   // Human-readable title for this board — shown in invite notifications
   const [boardTitle, setBoardTitle] = useState<string>(() => {
     // Will be overwritten once we fetch metadata (if loading from URL)
@@ -1593,8 +1594,7 @@ export default function CanvasBoard({
 
   function handleClearAll() {
     if (itemsRef.current.length === 0) return;
-    if (!window.confirm('Ștergi tot de pe tablă? Acțiunea nu poate fi anulată.')) return;
-    commit([]);
+    setShowClearConfirm(true);
   }
 
   function commitText(tc: TextCursor) {
@@ -2004,6 +2004,86 @@ export default function CanvasBoard({
         onPointerUp={pointerUp}
         onPointerLeave={pointerLeave}
       />
+
+      {/* ── Clear-board confirmation dialog ───────────────────────────── */}
+      {showClearConfirm &&
+        createPortal(
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.35)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 10000,
+            }}
+            onClick={() => setShowClearConfirm(false)}
+          >
+            <div
+              style={{
+                background: '#fff',
+                borderRadius: 14,
+                padding: '28px 32px',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+                maxWidth: 340,
+                width: '90%',
+                fontFamily: 'sans-serif',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p
+                style={{
+                  margin: '0 0 8px',
+                  fontSize: 17,
+                  fontWeight: 700,
+                  color: '#0f172a',
+                }}
+              >
+                Ștergi toată tabla?
+              </p>
+              <p style={{ margin: '0 0 24px', fontSize: 14, color: '#64748b' }}>
+                Toate elementele vor fi șterse definitiv. Acțiunea nu poate fi anulată.
+              </p>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => setShowClearConfirm(false)}
+                  style={{
+                    padding: '8px 18px',
+                    borderRadius: 8,
+                    border: '1.5px solid #e2e8f0',
+                    background: '#f8fafc',
+                    color: '#475569',
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Anulează
+                </button>
+                <button
+                  onClick={() => {
+                    setShowClearConfirm(false);
+                    commit([]);
+                  }}
+                  style={{
+                    padding: '8px 18px',
+                    borderRadius: 8,
+                    border: 'none',
+                    background: '#ef4444',
+                    color: '#fff',
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Șterge tot
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* ── Sync error banner ─────────────────────────────────────────── */}
       {syncError && (
