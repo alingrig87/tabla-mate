@@ -1277,7 +1277,9 @@ export default function GeometriePage({ onBack }: { onBack: () => void }) {
   return (
     <div
       style={{
-        minHeight: '100vh',
+        position: 'fixed',
+        inset: 0,
+        overflowY: 'auto',
         background: '#f1f5f9',
         fontFamily: 'system-ui, -apple-system, sans-serif',
         display: 'flex',
