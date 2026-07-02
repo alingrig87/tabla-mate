@@ -38,6 +38,16 @@ interface PenItem {
   points: Point[];
 }
 
+// Preset dash patterns: [dashLen, gapLen, ...] passed to ctx.setLineDash
+const DASH_PRESETS = [
+  { key: 'deasa', label: '-- -- --', pattern: [5, 3] },
+  { key: 'normala', label: '—  —  —', pattern: [12, 6] },
+  { key: 'rara', label: '——   ——', pattern: [20, 10] },
+  { key: 'puncte', label: '·  ·  ·', pattern: [2, 7] },
+  { key: 'linie-punct', label: '— · — ·', pattern: [12, 5, 2, 5] },
+] as const;
+type DashKey = (typeof DASH_PRESETS)[number]['key'];
+
 interface ShapeItem {
   kind: 'line' | 'rect' | 'circle';
   id: string; // stable UUID — Firestore doc id in collaborative mode
@@ -47,7 +57,7 @@ interface ShapeItem {
   y1: number;
   x2: number;
   y2: number;
-  dashed?: boolean;
+  dashPattern?: number[]; // e.g. [10,6] for dashed, [2,6] for dots
 }
 
 interface TextItem {
@@ -119,7 +129,7 @@ interface ShapePreview {
   y1: number;
   x2: number;
   y2: number;
-  dashed?: boolean;
+  dashPattern?: number[];
 }
 
 interface TextCursor {
@@ -225,7 +235,7 @@ function drawItem(ctx: CanvasRenderingContext2D, item: DrawItem) {
       ctx.strokeStyle = item.color;
       ctx.lineWidth = item.width;
       ctx.lineCap = 'round';
-      if (item.dashed) ctx.setLineDash([10, 6]);
+      if (item.dashPattern?.length) ctx.setLineDash(item.dashPattern);
       ctx.beginPath();
       ctx.moveTo(item.x1, item.y1);
       ctx.lineTo(item.x2, item.y2);
@@ -289,7 +299,7 @@ function drawShapePreview(
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = width;
-  ctx.setLineDash(s.dashed ? [10, 6] : [6, 4]);
+  ctx.setLineDash(s.dashPattern?.length ? s.dashPattern : [6, 4]);
   switch (s.kind) {
     case 'line':
       ctx.lineCap = 'round';
@@ -650,13 +660,7 @@ const IconCircle = () => (
     <circle cx="12" cy="12" r="9" />
   </svg>
 );
-const IconText = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
-    <polyline points="4 7 4 4 20 4 20 7" />
-    <line x1="9" y1="20" x2="15" y2="20" />
-    <line x1="12" y1="4" x2="12" y2="20" />
-  </svg>
-);
+
 const IconUndo = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
     <polyline points="9 14 4 9 9 4" />
@@ -1032,6 +1036,15 @@ export default function CanvasBoard({
     activeGeomRef.current = activeGeom;
   }, [activeGeom]);
   const [showShapes, setShowShapes] = useState(false);
+  const [showDashPanel, setShowDashPanel] = useState(false);
+  const [dashKey, setDashKey] = useState<DashKey>('normala');
+  const dashPatternRef = useRef<number[]>(
+    DASH_PRESETS.find((p) => p.key === 'normala')!.pattern as unknown as number[]
+  );
+  useEffect(() => {
+    dashPatternRef.current = DASH_PRESETS.find((p) => p.key === dashKey)!
+      .pattern as unknown as number[];
+  }, [dashKey]);
 
   // GeomStyle decoration toggles — off by default; persisted to localStorage
   const [geomStyle, setGeomStyle] = useState<GeomStyle>(() => {
@@ -1551,6 +1564,10 @@ export default function CanvasBoard({
         e.preventDefault();
         handleClearAll();
       }
+      if (e.key === 't' && !ctrl) {
+        e.preventDefault();
+        setTool('text');
+      }
       if (e.key === 'Escape') {
         setShowColorPanel(false);
         // Deselect current item
@@ -1608,6 +1625,7 @@ export default function CanvasBoard({
   function closePopovers() {
     setShowColorPanel(false);
     setShowShapes(false);
+    setShowDashPanel(false);
   }
 
   function handleClearAll() {
@@ -1835,7 +1853,7 @@ export default function CanvasBoard({
           y1: startRef.current.y,
           x2: ex,
           y2: ey,
-          dashed: t === 'dashed-line',
+          dashPattern: t === 'dashed-line' ? dashPatternRef.current : undefined,
         },
         color: colorRef.current,
         width: penSizeRef.current,
@@ -1964,7 +1982,7 @@ export default function CanvasBoard({
           y1,
           x2,
           y2,
-          ...(t === 'dashed-line' && { dashed: true }),
+          ...(t === 'dashed-line' && { dashPattern: dashPatternRef.current }),
         },
       ]);
     } else if (t === 'geom' && activeGeomRef.current) {
@@ -2188,7 +2206,10 @@ export default function CanvasBoard({
         </PillBtn>
         <PillBtn
           active={tool === 'dashed-line'}
-          onClick={() => setTool('dashed-line')}
+          onClick={() => {
+            setTool('dashed-line');
+            setShowDashPanel((v) => !v);
+          }}
           title="Linie punctată"
         >
           <IconDashedLine />
@@ -2199,9 +2220,7 @@ export default function CanvasBoard({
         <PillBtn active={tool === 'circle'} onClick={() => setTool('circle')} title="Cerc (C)">
           <IconCircle />
         </PillBtn>
-        <PillBtn active={tool === 'text'} onClick={() => setTool('text')} title="Text (T)">
-          <IconText />
-        </PillBtn>
+
         <PillBtn
           active={tool === 'geom'}
           onClick={() => {
@@ -2657,6 +2676,76 @@ export default function CanvasBoard({
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* ── Dash style panel ──────────────────────────────────────────── */}
+      {showDashPanel && (
+        <div
+          data-panel
+          style={{
+            position: 'fixed',
+            top: 68,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#fff',
+            borderRadius: 14,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+            padding: '14px 18px',
+            zIndex: 20,
+            userSelect: 'none',
+            minWidth: 260,
+            fontFamily: 'sans-serif',
+          }}
+        >
+          <div style={{ fontSize: 11, color: '#888', marginBottom: 10 }}>Stil linie punctată</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {DASH_PRESETS.map((preset) => {
+              const on = dashKey === preset.key;
+              return (
+                <button
+                  key={preset.key}
+                  onClick={() => {
+                    setDashKey(preset.key);
+                    setShowDashPanel(false);
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    border: on ? '2px solid #3b82f6' : '1.5px solid #e2e8f0',
+                    background: on ? '#eff6ff' : '#fafafa',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {/* Mini canvas preview of the dash pattern */}
+                  <svg width="60" height="10" style={{ flexShrink: 0 }}>
+                    <line
+                      x1="2"
+                      y1="5"
+                      x2="58"
+                      y2="5"
+                      stroke={on ? '#3b82f6' : '#334155'}
+                      strokeWidth="2"
+                      strokeDasharray={preset.pattern.join(' ')}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  <span
+                    style={{
+                      fontSize: 13,
+                      color: on ? '#3b82f6' : '#334155',
+                      fontWeight: on ? 700 : 400,
+                    }}
+                  >
+                    {preset.key.charAt(0).toUpperCase() + preset.key.slice(1).replace('-', ' ')}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
