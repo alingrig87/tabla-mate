@@ -170,6 +170,14 @@ function constrainToSquare(x1: number, y1: number, x2: number, y2: number) {
   return { x2: x1 + size * (dx >= 0 ? 1 : -1), y2: y1 + size * (dy >= 0 ? 1 : -1) };
 }
 
+// Circle drawn from its center outward: the drag-start point stays the center in
+// every direction, radius = distance to the pointer. Returns the same bbox-corner
+// shape (x1,y1,x2,y2) every renderer already expects, so nothing downstream changes.
+function circleBoxFromCenter(cx: number, cy: number, px: number, py: number) {
+  const r = Math.hypot(px - cx, py - cy);
+  return { x1: cx - r, y1: cy - r, x2: cx + r, y2: cy + r };
+}
+
 // ─── Shape recognition ────────────────────────────────────────────────────────
 
 type RecognizedShape =
@@ -1941,17 +1949,25 @@ export default function CanvasBoard({
       ctx.stroke();
       ctx.restore();
     } else if (t === 'line' || t === 'dashed-line' || t === 'rect' || t === 'circle') {
+      let sx = startRef.current.x;
+      let sy = startRef.current.y;
       let { x: ex, y: ey } = pos;
-      if (t === 'rect' || t === 'circle') {
-        const c = constrainToSquare(startRef.current.x, startRef.current.y, ex, ey);
+      if (t === 'rect') {
+        const c = constrainToSquare(sx, sy, ex, ey);
+        ex = c.x2;
+        ey = c.y2;
+      } else if (t === 'circle') {
+        const c = circleBoxFromCenter(sx, sy, ex, ey);
+        sx = c.x1;
+        sy = c.y1;
         ex = c.x2;
         ey = c.y2;
       }
       redraw(undefined, {
         shape: {
           kind: t === 'dashed-line' ? 'line' : t,
-          x1: startRef.current.x,
-          y1: startRef.current.y,
+          x1: sx,
+          y1: sy,
           x2: ex,
           y2: ey,
           dashPattern: t === 'dashed-line' ? dashPatternRef.current : undefined,
@@ -1960,12 +1976,23 @@ export default function CanvasBoard({
         width: penSizeRef.current,
       });
     } else if (t === 'geom' && activeGeomRef.current) {
+      let x1 = startRef.current.x;
+      let y1 = startRef.current.y;
+      let x2 = pos.x;
+      let y2 = pos.y;
+      if (activeGeomRef.current === 'circle-geom') {
+        const c = circleBoxFromCenter(x1, y1, x2, y2);
+        x1 = c.x1;
+        y1 = c.y1;
+        x2 = c.x2;
+        y2 = c.y2;
+      }
       redraw(undefined, undefined, {
         kind: activeGeomRef.current,
-        x1: startRef.current.x,
-        y1: startRef.current.y,
-        x2: pos.x,
-        y2: pos.y,
+        x1,
+        y1,
+        x2,
+        y2,
         color: colorRef.current,
         width: penSizeRef.current,
         style: geomStyleRef.current,
@@ -2060,11 +2087,17 @@ export default function CanvasBoard({
         commit([...itemsRef.current, stroke]);
       }
     } else if (t === 'line' || t === 'dashed-line' || t === 'rect' || t === 'circle') {
-      const { x: x1, y: y1 } = startRef.current;
+      let { x: x1, y: y1 } = startRef.current;
       let x2 = pos.x,
         y2 = pos.y;
-      if (t === 'rect' || t === 'circle') {
+      if (t === 'rect') {
         const c = constrainToSquare(x1, y1, x2, y2);
+        x2 = c.x2;
+        y2 = c.y2;
+      } else if (t === 'circle') {
+        const c = circleBoxFromCenter(x1, y1, x2, y2);
+        x1 = c.x1;
+        y1 = c.y1;
         x2 = c.x2;
         y2 = c.y2;
       }
@@ -2087,8 +2120,17 @@ export default function CanvasBoard({
         },
       ]);
     } else if (t === 'geom' && activeGeomRef.current) {
-      const { x: x1, y: y1 } = startRef.current;
-      if (Math.abs(pos.x - x1) < 3 && Math.abs(pos.y - y1) < 3) {
+      let { x: x1, y: y1 } = startRef.current;
+      let x2 = pos.x;
+      let y2 = pos.y;
+      if (activeGeomRef.current === 'circle-geom') {
+        const c = circleBoxFromCenter(x1, y1, x2, y2);
+        x1 = c.x1;
+        y1 = c.y1;
+        x2 = c.x2;
+        y2 = c.y2;
+      }
+      if (Math.abs(x2 - x1) < 3 && Math.abs(y2 - y1) < 3) {
         redraw(); // discard tiny drag
         return;
       }
@@ -2102,8 +2144,8 @@ export default function CanvasBoard({
           width: penSizeRef.current,
           x1,
           y1,
-          x2: pos.x,
-          y2: pos.y,
+          x2,
+          y2,
           style: { ...geomStyleRef.current },
         },
       ]);
