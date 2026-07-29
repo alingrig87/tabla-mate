@@ -178,6 +178,164 @@ function circleBoxFromCenter(cx: number, cy: number, px: number, py: number) {
   return { x1: cx - r, y1: cy - r, x2: cx + r, y2: cy + r };
 }
 
+// ─── Circle tool: click a shape's point to circumscribe it ───────────────────
+//
+// Returns the defining points (corners) of shapes that have well-defined ones,
+// so the circle tool can offer to snap onto them and auto-build the circle
+// that passes through all of them. Mirrors the exact per-kind vertex math used
+// to render each shape in src/shapes/index.ts's drawGeom — keep both in sync
+// if a shape's geometry changes there.
+function getShapeVertices(item: DrawItem): Point[] | null {
+  if (item.kind === 'line') {
+    return [
+      { x: item.x1, y: item.y1 },
+      { x: item.x2, y: item.y2 },
+    ];
+  }
+  if (item.kind === 'rect') {
+    const L = Math.min(item.x1, item.x2),
+      R = Math.max(item.x1, item.x2);
+    const T = Math.min(item.y1, item.y2),
+      B = Math.max(item.y1, item.y2);
+    return [
+      { x: L, y: T },
+      { x: R, y: T },
+      { x: R, y: B },
+      { x: L, y: B },
+    ];
+  }
+  if (item.kind !== 'geom') return null;
+
+  const { x1, y1, x2, y2 } = item;
+  const L = Math.min(x1, x2),
+    R = Math.max(x1, x2);
+  const T = Math.min(y1, y2),
+    B = Math.max(y1, y2);
+  const cx = (L + R) / 2,
+    cy = (T + B) / 2;
+  const hw = (R - L) / 2,
+    hh = (B - T) / 2;
+  const r = Math.min(hw, hh);
+
+  switch (item.geomKind) {
+    case 'segment':
+      return [
+        { x: L, y: cy },
+        { x: R, y: cy },
+      ];
+    case 'square-geom':
+    case 'rect-geom':
+      return [
+        { x: L, y: T },
+        { x: R, y: T },
+        { x: R, y: B },
+        { x: L, y: B },
+      ];
+    case 'tri-right':
+      return [
+        { x: L, y: B },
+        { x: R, y: B },
+        { x: L, y: T },
+      ];
+    case 'tri-equilateral': {
+      const hE = r * Math.sqrt(3);
+      return [
+        { x: cx, y: cy - (hE * 2) / 3 },
+        { x: cx + r, y: cy + hE / 3 },
+        { x: cx - r, y: cy + hE / 3 },
+      ];
+    }
+    case 'tri-isosceles':
+      return [
+        { x: cx, y: T },
+        { x: R, y: B },
+        { x: L, y: B },
+      ];
+    case 'tri-scalene': {
+      const apexX = L + hw * 0.35;
+      return [
+        { x: apexX, y: T },
+        { x: R, y: B },
+        { x: L, y: B },
+      ];
+    }
+    case 'tri-acute':
+      return [
+        { x: cx + hw * 0.08, y: T + hh * 0.06 },
+        { x: R - hw * 0.07, y: B },
+        { x: L + hw * 0.04, y: B - hh * 0.12 },
+      ];
+    case 'tri-obtuse':
+      return [
+        { x: L + hw * 0.12, y: cy + hh * 0.18 },
+        { x: R - hw * 0.05, y: B - hh * 0.05 },
+        { x: cx - hw * 0.1, y: T + hh * 0.12 },
+      ];
+    default:
+      return null;
+  }
+}
+
+// Circle through the given points: for 2 points it's the circle with that
+// segment as diameter; for 3+ points it's the circumcircle through the first
+// three — exact for triangles, and also correct for rectangles/regular
+// polygons since their corners are concyclic by construction.
+function circleThroughVertices(pts: Point[]): { cx: number; cy: number; r: number } | null {
+  if (pts.length === 2) {
+    const [a, b] = pts;
+    return { cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, r: Math.hypot(b.x - a.x, b.y - a.y) / 2 };
+  }
+  if (pts.length >= 3) {
+    const [a, b, c] = pts;
+    const d = 2 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+    if (Math.abs(d) < 1e-6) return null; // collinear — no unique circle
+    const aSq = a.x * a.x + a.y * a.y;
+    const bSq = b.x * b.x + b.y * b.y;
+    const cSq = c.x * c.x + c.y * c.y;
+    const ux = (aSq * (b.y - c.y) + bSq * (c.y - a.y) + cSq * (a.y - b.y)) / d;
+    const uy = (aSq * (c.x - b.x) + bSq * (a.x - c.x) + cSq * (b.x - a.x)) / d;
+    return { cx: ux, cy: uy, r: Math.hypot(a.x - ux, a.y - uy) };
+  }
+  return null;
+}
+
+interface SnapPoint extends Point {
+  vertices: Point[];
+}
+
+// Every snap-able vertex currently on the board, each tagged with its owning
+// shape's full vertex list (clicking one point can build a circle through them all).
+function collectSnapPoints(items: DrawItem[]): SnapPoint[] {
+  const out: SnapPoint[] = [];
+  for (const item of items) {
+    const vertices = getShapeVertices(item);
+    if (!vertices) continue;
+    for (const v of vertices) out.push({ x: v.x, y: v.y, vertices });
+  }
+  return out;
+}
+
+// Hit-tests pos against every snap point within a constant screen-space
+// radius and, if one is found, returns the circle through its shape's
+// vertices — null if nothing is close enough or the points are collinear.
+function findCircumscribeCircle(
+  items: DrawItem[],
+  pos: Point,
+  scale: number
+): { cx: number; cy: number; r: number } | null {
+  const hitRadius = 10 / scale;
+  let best: SnapPoint | null = null;
+  let bestDist = hitRadius;
+  for (const p of collectSnapPoints(items)) {
+    const d = Math.hypot(p.x - pos.x, p.y - pos.y);
+    if (d <= bestDist) {
+      bestDist = d;
+      best = p;
+    }
+  }
+  return best ? circleThroughVertices(best.vertices) : null;
+}
+
 // ─── Shape recognition ────────────────────────────────────────────────────────
 
 type RecognizedShape =
@@ -372,7 +530,8 @@ function redrawAll(
     style?: GeomStyle;
   },
   selectionBox?: { x: number; y: number; w: number; h: number },
-  remoteCursors?: PresenceEntry[]
+  remoteCursors?: PresenceEntry[],
+  snapPoints?: SnapPoint[]
 ) {
   // Snapshot render args so image onLoad callbacks can re-trigger drawing
   _lastCtx = ctx;
@@ -404,6 +563,22 @@ function redrawAll(
       geomPreview.y2,
       geomPreview.style
     );
+  // Snap points — small hollow dots on every existing shape's corners, shown
+  // while the circle tool is active so you can click one to circumscribe it.
+  if (snapPoints?.length) {
+    ctx.save();
+    const pr = 4 / scale;
+    ctx.lineWidth = 1.5 / scale;
+    for (const p of snapPoints) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, pr, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff';
+      ctx.fill();
+      ctx.strokeStyle = '#3b82f6';
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
   // Selection highlight — dashed blue rect with corner handles, screen-size-stable
   if (selectionBox) {
     ctx.save();
@@ -1111,6 +1286,12 @@ export default function CanvasBoard({
   useEffect(() => {
     activeGeomRef.current = activeGeom;
   }, [activeGeom]);
+
+  // Repaint on tool/geom-kind switch so the circle tool's snap-point dots
+  // appear immediately, without waiting for the next pointer move.
+  useEffect(() => {
+    redraw();
+  }, [tool, activeGeom]); // eslint-disable-line react-hooks/exhaustive-deps
   const [showShapes, setShowShapes] = useState(false);
   const [showDashPanel, setShowDashPanel] = useState(false);
   const [dashKey, setDashKey] = useState<DashKey>('normala');
@@ -1214,6 +1395,9 @@ export default function CanvasBoard({
       const sel = displayItems.find((i) => i.id === selectedIdRef.current);
       if (sel) selBox = getBoundingBox(sel, 6);
     }
+    const showSnapPoints =
+      toolRef.current === 'circle' ||
+      (toolRef.current === 'geom' && activeGeomRef.current === 'circle-geom');
     redrawAll(
       getCtx(),
       displayItems,
@@ -1222,7 +1406,8 @@ export default function CanvasBoard({
       preview,
       geomPreview,
       selBox,
-      remoteCursorsRef.current
+      remoteCursorsRef.current,
+      showSnapPoints ? collectSnapPoints(displayItems) : undefined
     );
   }
 
@@ -1829,8 +2014,30 @@ export default function CanvasBoard({
     }
 
     if (t === 'geom' && activeGeomRef.current) {
+      const pos = getPos(e);
+      if (activeGeomRef.current === 'circle-geom') {
+        const built = findCircumscribeCircle(itemsRef.current, pos, scaleRef.current);
+        if (built) {
+          commit([
+            ...itemsRef.current,
+            {
+              kind: 'geom',
+              id: crypto.randomUUID(),
+              geomKind: 'circle-geom',
+              color: colorRef.current,
+              width: penSizeRef.current,
+              x1: built.cx - built.r,
+              y1: built.cy - built.r,
+              x2: built.cx + built.r,
+              y2: built.cy + built.r,
+              style: { ...geomStyleRef.current },
+            },
+          ]);
+          return;
+        }
+      }
       isDrawingRef.current = true;
-      startRef.current = getPos(e);
+      startRef.current = pos;
       return;
     }
 
@@ -1842,10 +2049,10 @@ export default function CanvasBoard({
       return;
     }
 
-    isDrawingRef.current = true;
     const pos = getPos(e);
 
     if (t === 'pen') {
+      isDrawingRef.current = true;
       currentPenRef.current = {
         kind: 'pen',
         id: crypto.randomUUID(),
@@ -1853,7 +2060,28 @@ export default function CanvasBoard({
         width: penSizeRef.current,
         points: [pos],
       };
+    } else if (t === 'circle') {
+      const built = findCircumscribeCircle(itemsRef.current, pos, scaleRef.current);
+      if (built) {
+        commit([
+          ...itemsRef.current,
+          {
+            kind: 'circle',
+            id: crypto.randomUUID(),
+            color: colorRef.current,
+            width: penSizeRef.current,
+            x1: built.cx - built.r,
+            y1: built.cy - built.r,
+            x2: built.cx + built.r,
+            y2: built.cy + built.r,
+          },
+        ]);
+        return;
+      }
+      isDrawingRef.current = true;
+      startRef.current = pos;
     } else {
+      isDrawingRef.current = true;
       startRef.current = pos;
     }
   }
