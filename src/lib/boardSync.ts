@@ -83,9 +83,16 @@ export async function addItemToBoard(
   await setDoc(ref, { ...data, authorId, createdAt: serverTimestamp() });
 }
 
-// Delete a single item from Firestore (no-op if doc doesn't exist).
-export async function removeItemFromBoard(boardId: string, itemId: string): Promise<void> {
-  await deleteDoc(doc(db, 'boards', boardId, 'items', itemId));
+// Delete multiple items atomically — used for bulk removal (e.g. "clear
+// board") so the realtime item listener never observes a partially-cleared
+// board mid-batch and re-adds items that were about to be deleted anyway.
+export async function removeItemsFromBoard(boardId: string, itemIds: string[]): Promise<void> {
+  if (itemIds.length === 0) return;
+  const batch = writeBatch(db);
+  for (const itemId of itemIds) {
+    batch.delete(doc(db, 'boards', boardId, 'items', itemId));
+  }
+  await batch.commit();
 }
 
 // Partially update a single item in Firestore (used to sync a moved item).
