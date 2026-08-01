@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   subscribeToBoardItems,
   addItemToBoard,
-  removeItemFromBoard,
+  removeItemsFromBoard,
   updateItemInBoard,
   createBoard,
   getBoardMeta,
@@ -27,6 +27,7 @@ type PenTool =
   | 'dashed-line'
   | 'rect'
   | 'circle'
+  | 'compass'
   | 'text'
   | 'geom'
   | 'move'
@@ -147,7 +148,7 @@ function preloadImg(item: ImageItem): HTMLImageElement {
 }
 
 interface ShapePreview {
-  kind: 'line' | 'rect' | 'circle';
+  kind: 'line' | 'rect' | 'circle' | 'compass';
   x1: number;
   y1: number;
   x2: number;
@@ -507,6 +508,28 @@ function drawShapePreview(
       ctx.beginPath();
       ctx.arc(cx, cy, r || 1, 0, Math.PI * 2);
       ctx.stroke();
+      break;
+    }
+    case 'compass': {
+      // Here x1,y1/x2,y2 are the raw center and pointer position (not a
+      // bbox) — draw the swept arc plus the compass "arm" pointing at the
+      // cursor, like a real drafting compass mid-stroke.
+      const r = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+      ctx.beginPath();
+      ctx.arc(s.x1, s.y1, r || 1, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(s.x1, s.y1);
+      ctx.lineTo(s.x2, s.y2);
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(s.x1, s.y1, Math.max(2, width), 0, Math.PI * 2); // pin at the center
+      ctx.fill();
+      ctx.restore();
       break;
     }
   }
@@ -896,6 +919,17 @@ const IconRect = () => (
 const IconCircle = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
     <circle cx="12" cy="12" r="9" />
+  </svg>
+);
+const IconCompass = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...IC}>
+    {/* Drafting compass, tilted: hinge top-right, needle leg pins the center
+        of the circle it just traced, pencil leg is a short stub */}
+    <circle cx="14" cy="4" r="1.2" fill="currentColor" stroke="none" />
+    <line x1="14" y1="5.2" x2="9" y2="15" />
+    <line x1="14" y1="5.2" x2="17" y2="9.5" />
+    <circle cx="9" cy="15" r="1" fill="currentColor" stroke="none" />
+    <circle cx="9" cy="15" r="6.5" strokeDasharray="2 2" />
   </svg>
 );
 
@@ -1397,6 +1431,7 @@ export default function CanvasBoard({
     }
     const showSnapPoints =
       toolRef.current === 'circle' ||
+      toolRef.current === 'compass' ||
       (toolRef.current === 'geom' && activeGeomRef.current === 'circle-geom');
     redrawAll(
       getCtx(),
@@ -1658,10 +1693,16 @@ export default function CanvasBoard({
         .catch(console.error);
     }
 
-    // Removed items → delete from Firestore
-    for (const item of prev) {
-      if (!item.id || nextIds.has(item.id)) continue;
-      removeItemFromBoard(bid, item.id).catch(console.error);
+    // Removed items → delete from Firestore, atomically. A staggered loop of
+    // individual deletes let the realtime listener catch the board mid-batch
+    // (some items already gone, others not yet) and briefly re-add the
+    // survivors over the just-cleared local state — most visible as "clear
+    // all" not fully clearing on the first click.
+    const removedIds = prev
+      .filter((item) => item.id && !nextIds.has(item.id))
+      .map((item) => item.id as string);
+    if (removedIds.length > 0) {
+      removeItemsFromBoard(bid, removedIds).catch(console.error);
     }
   }
 
@@ -2060,7 +2101,7 @@ export default function CanvasBoard({
         width: penSizeRef.current,
         points: [pos],
       };
-    } else if (t === 'circle') {
+    } else if (t === 'circle' || t === 'compass') {
       const built = findCircumscribeCircle(itemsRef.current, pos, scaleRef.current);
       if (built) {
         commit([
@@ -2176,7 +2217,13 @@ export default function CanvasBoard({
       }
       ctx.stroke();
       ctx.restore();
-    } else if (t === 'line' || t === 'dashed-line' || t === 'rect' || t === 'circle') {
+    } else if (
+      t === 'line' ||
+      t === 'dashed-line' ||
+      t === 'rect' ||
+      t === 'circle' ||
+      t === 'compass'
+    ) {
       let sx = startRef.current.x;
       let sy = startRef.current.y;
       let { x: ex, y: ey } = pos;
@@ -2191,6 +2238,9 @@ export default function CanvasBoard({
         ex = c.x2;
         ey = c.y2;
       }
+      // 'compass' keeps sx,sy/ex,ey as the raw center/pointer (not the bbox
+      // corners) so the preview can draw the radius arm pointing at the
+      // actual cursor, the way a real drafting compass shows its arm.
       redraw(undefined, {
         shape: {
           kind: t === 'dashed-line' ? 'line' : t,
@@ -2314,7 +2364,13 @@ export default function CanvasBoard({
       } else {
         commit([...itemsRef.current, stroke]);
       }
-    } else if (t === 'line' || t === 'dashed-line' || t === 'rect' || t === 'circle') {
+    } else if (
+      t === 'line' ||
+      t === 'dashed-line' ||
+      t === 'rect' ||
+      t === 'circle' ||
+      t === 'compass'
+    ) {
       let { x: x1, y: y1 } = startRef.current;
       let x2 = pos.x,
         y2 = pos.y;
@@ -2322,7 +2378,7 @@ export default function CanvasBoard({
         const c = constrainToSquare(x1, y1, x2, y2);
         x2 = c.x2;
         y2 = c.y2;
-      } else if (t === 'circle') {
+      } else if (t === 'circle' || t === 'compass') {
         const c = circleBoxFromCenter(x1, y1, x2, y2);
         x1 = c.x1;
         y1 = c.y1;
@@ -2336,7 +2392,9 @@ export default function CanvasBoard({
       commit([
         ...itemsRef.current,
         {
-          kind: t === 'dashed-line' ? 'line' : t,
+          // The compass tool draws exactly a circle — only the live preview
+          // (with its radius arm) looks different from the plain circle tool.
+          kind: t === 'dashed-line' ? 'line' : t === 'compass' ? 'circle' : t,
           id: crypto.randomUUID(),
           color: colorRef.current,
           width: penSizeRef.current,
@@ -2590,6 +2648,13 @@ export default function CanvasBoard({
         </PillBtn>
         <PillBtn active={tool === 'circle'} onClick={() => setTool('circle')} title="Cerc (C)">
           <IconCircle />
+        </PillBtn>
+        <PillBtn
+          active={tool === 'compass'}
+          onClick={() => setTool('compass')}
+          title="Compas — trage o rază din centru"
+        >
+          <IconCompass />
         </PillBtn>
 
         <PillBtn
