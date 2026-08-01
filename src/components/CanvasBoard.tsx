@@ -174,11 +174,6 @@ function constrainToSquare(x1: number, y1: number, x2: number, y2: number) {
 // Circle drawn from its center outward: the drag-start point stays the center in
 // every direction, radius = distance to the pointer. Returns the same bbox-corner
 // shape (x1,y1,x2,y2) every renderer already expects, so nothing downstream changes.
-// Threshold of cumulative rotation around the start point, while drawing
-// with the line tool, before the drag is treated as "sweeping a circle"
-// rather than pulling a straight line.
-const SWEEP_TO_CIRCLE_RADIANS = Math.PI / 4.5; // ~40°
-
 function circleBoxFromCenter(cx: number, cy: number, px: number, py: number) {
   const r = Math.hypot(px - cx, py - cy);
   return { x1: cx - r, y1: cy - r, x2: cx + r, y2: cy + r };
@@ -322,13 +317,8 @@ function collectSnapPoints(items: DrawItem[]): SnapPoint[] {
 }
 
 // Hit-tests pos against every snap point within a constant screen-space
-// radius and, if one is found, returns the circle through its shape's
-// vertices — null if nothing is close enough or the points are collinear.
-function findCircumscribeCircle(
-  items: DrawItem[],
-  pos: Point,
-  scale: number
-): { cx: number; cy: number; r: number } | null {
+// radius and returns the closest one, or null if nothing is close enough.
+function findNearestSnapPoint(items: DrawItem[], pos: Point, scale: number): SnapPoint | null {
   const hitRadius = 10 / scale;
   let best: SnapPoint | null = null;
   let bestDist = hitRadius;
@@ -339,7 +329,7 @@ function findCircumscribeCircle(
       best = p;
     }
   }
-  return best ? circleThroughVertices(best.vertices) : null;
+  return best;
 }
 
 // ─── Shape recognition ────────────────────────────────────────────────────────
@@ -1267,14 +1257,21 @@ export default function CanvasBoard({
   const isDrawingRef = useRef(false);
   const currentPenRef = useRef<PenItem | null>(null);
   const startRef = useRef<Point>({ x: 0, y: 0 });
-  // Line tool "sweep into a circle" gesture: if the drag rotates enough
-  // around the start point (like swinging a compass arm) instead of just
-  // pulling straight, it turns into a circle with that radius on release.
-  const lineSweepRef = useRef<{ totalAngle: number; lastAngle: number | null; isCircle: boolean }>({
-    totalAngle: 0,
-    lastAngle: null,
-    isCircle: false,
-  });
+  // Circle/compass tool: the snap point (if any) the current drag started
+  // from — kept so a plain click (no real drag) can still circumscribe it,
+  // while an actual drag instead pins the center there and sweeps freely.
+  const circleAnchorRef = useRef<SnapPoint | null>(null);
+  // Fixed-radius compass sweep: active while dragging from a LINE's endpoint
+  // with the circle/compass tool. Radius stays locked to the line's own
+  // length; only the angle around the pivot changes as the user sweeps.
+  const arcSweepRef = useRef<{
+    cx: number;
+    cy: number;
+    radius: number;
+    startAngle: number;
+    lastAngle: number;
+    sweptAngle: number;
+  } | null>(null);
 
   const [items, setItems] = useState<DrawItem[]>([]);
   const itemsRef = useRef<DrawItem[]>([]);
@@ -2070,25 +2067,11 @@ export default function CanvasBoard({
     if (t === 'geom' && activeGeomRef.current) {
       const pos = getPos(e);
       if (activeGeomRef.current === 'circle-geom') {
-        const built = findCircumscribeCircle(itemsRef.current, pos, scaleRef.current);
-        if (built) {
-          commit([
-            ...itemsRef.current,
-            {
-              kind: 'geom',
-              id: crypto.randomUUID(),
-              geomKind: 'circle-geom',
-              color: colorRef.current,
-              width: penSizeRef.current,
-              x1: built.cx - built.r,
-              y1: built.cy - built.r,
-              x2: built.cx + built.r,
-              y2: built.cy + built.r,
-              style: { ...geomStyleRef.current },
-            },
-          ]);
-          return;
-        }
+        const anchor = findNearestSnapPoint(itemsRef.current, pos, scaleRef.current);
+        circleAnchorRef.current = anchor;
+        isDrawingRef.current = true;
+        startRef.current = anchor ?? pos;
+        return;
       }
       isDrawingRef.current = true;
       startRef.current = pos;
@@ -2115,31 +2098,38 @@ export default function CanvasBoard({
         points: [pos],
       };
     } else if (t === 'circle' || t === 'compass') {
-      const built = findCircumscribeCircle(itemsRef.current, pos, scaleRef.current);
-      if (built) {
-        commit([
-          ...itemsRef.current,
-          {
-            kind: 'circle',
-            id: crypto.randomUUID(),
-            color: colorRef.current,
-            width: penSizeRef.current,
-            x1: built.cx - built.r,
-            y1: built.cy - built.r,
-            x2: built.cx + built.r,
-            y2: built.cy + built.r,
-          },
-        ]);
+      // Snap the drag's start (and thus the circle's center) exactly onto a
+      // nearby point — a shape's vertex or a line's endpoint — instead of
+      // wherever the pointer landed. What happens at release depends on
+      // whether this turns into a real drag or stays a plain click.
+      const anchor = findNearestSnapPoint(itemsRef.current, pos, scaleRef.current);
+      if (anchor && anchor.vertices.length === 2) {
+        // Starting from a LINE's endpoint: radius locks to the line's own
+        // length (like a compass already set to that span), pivoting on
+        // this point. The starting angle points at the line's other end,
+        // so the sweep continues naturally from where the line left off —
+        // in whichever direction (left or right) the user swings it.
+        const [v0, v1] = anchor.vertices;
+        const other = v0.x === anchor.x && v0.y === anchor.y ? v1 : v0;
+        const radius = Math.hypot(other.x - anchor.x, other.y - anchor.y);
+        const startAngle = Math.atan2(other.y - anchor.y, other.x - anchor.x);
+        arcSweepRef.current = {
+          cx: anchor.x,
+          cy: anchor.y,
+          radius,
+          startAngle,
+          lastAngle: startAngle,
+          sweptAngle: 0,
+        };
+        isDrawingRef.current = true;
         return;
       }
+      circleAnchorRef.current = anchor;
       isDrawingRef.current = true;
-      startRef.current = pos;
+      startRef.current = anchor ?? pos;
     } else {
       isDrawingRef.current = true;
       startRef.current = pos;
-      if (t === 'line') {
-        lineSweepRef.current = { totalAngle: 0, lastAngle: null, isCircle: false };
-      }
     }
   }
 
@@ -2203,6 +2193,51 @@ export default function CanvasBoard({
 
     if (!isDrawingRef.current) return;
 
+    if (arcSweepRef.current) {
+      const sweep = arcSweepRef.current;
+      const angle = Math.atan2(pos.y - sweep.cy, pos.x - sweep.cx);
+      let delta = angle - sweep.lastAngle;
+      while (delta > Math.PI) delta -= 2 * Math.PI;
+      while (delta < -Math.PI) delta += 2 * Math.PI;
+      sweep.sweptAngle += delta;
+      // Clamp a little past a full turn so a lingering pointer doesn't wind
+      // the tracked angle indefinitely, but let the arc close visually.
+      const full = 2 * Math.PI * 1.02;
+      sweep.sweptAngle = Math.max(-full, Math.min(full, sweep.sweptAngle));
+      sweep.lastAngle = angle;
+
+      redraw(); // repaint committed items first; the transform stays active
+      const ctx = getCtx();
+      ctx.save();
+      ctx.strokeStyle = colorRef.current;
+      ctx.lineWidth = penSizeRef.current;
+      ctx.lineCap = 'round';
+      // The traced arc so far — solid, exactly like the circle it will become.
+      ctx.beginPath();
+      ctx.arc(
+        sweep.cx,
+        sweep.cy,
+        sweep.radius,
+        sweep.startAngle,
+        sweep.startAngle + sweep.sweptAngle,
+        sweep.sweptAngle < 0
+      );
+      ctx.stroke();
+      // The sweeping radius "hand" — dotted, from the pivot to wherever the
+      // arc currently ends, so it reads like a compass mid-turn.
+      const tipAngle = sweep.startAngle + sweep.sweptAngle;
+      ctx.setLineDash([5 / scaleRef.current, 4 / scaleRef.current]);
+      ctx.beginPath();
+      ctx.moveTo(sweep.cx, sweep.cy);
+      ctx.lineTo(
+        sweep.cx + sweep.radius * Math.cos(tipAngle),
+        sweep.cy + sweep.radius * Math.sin(tipAngle)
+      );
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+
     if (t === 'pen') {
       if (!currentPenRef.current) return;
       currentPenRef.current.points.push(pos);
@@ -2243,7 +2278,6 @@ export default function CanvasBoard({
       let sx = startRef.current.x;
       let sy = startRef.current.y;
       let { x: ex, y: ey } = pos;
-      let previewKind: ShapePreview['kind'] = t === 'dashed-line' ? 'line' : t;
       if (t === 'rect') {
         const c = constrainToSquare(sx, sy, ex, ey);
         ex = c.x2;
@@ -2254,30 +2288,13 @@ export default function CanvasBoard({
         sy = c.y1;
         ex = c.x2;
         ey = c.y2;
-      } else if (t === 'line') {
-        // Sweep-to-circle: track how much the drag has rotated around the
-        // start point. A plain pull stays at ~0 rotation; swinging around
-        // the start (like a compass arm) accumulates angle fast.
-        const sweep = lineSweepRef.current;
-        const dist = Math.hypot(ex - sx, ey - sy);
-        if (!sweep.isCircle && dist > 8 / scaleRef.current) {
-          const angle = Math.atan2(ey - sy, ex - sx);
-          if (sweep.lastAngle != null) {
-            let delta = angle - sweep.lastAngle;
-            while (delta > Math.PI) delta -= 2 * Math.PI;
-            while (delta < -Math.PI) delta += 2 * Math.PI;
-            sweep.totalAngle += Math.abs(delta);
-          }
-          sweep.lastAngle = angle;
-          if (sweep.totalAngle > SWEEP_TO_CIRCLE_RADIANS) sweep.isCircle = true;
-        }
-        // While sweeping, keep sx,sy/ex,ey as the raw center/pointer (like
-        // 'compass') so the preview draws the radius arm at the real cursor.
-        if (sweep.isCircle) previewKind = 'compass';
       }
+      // 'compass' keeps sx,sy/ex,ey as the raw center/pointer (not the bbox
+      // corners) so the preview can draw the radius arm pointing at the
+      // actual cursor, the way a real drafting compass shows its arm.
       redraw(undefined, {
         shape: {
-          kind: previewKind,
+          kind: t === 'dashed-line' ? 'line' : t,
           x1: sx,
           y1: sy,
           x2: ex,
@@ -2376,6 +2393,32 @@ export default function CanvasBoard({
     if (!isDrawingRef.current) return;
     isDrawingRef.current = false;
     const pos = getPos(e);
+
+    if (arcSweepRef.current) {
+      const sweep = arcSweepRef.current;
+      arcSweepRef.current = null;
+      if (Math.abs(sweep.sweptAngle) < 0.15) {
+        redraw(); // barely moved — treat as an accidental click, discard
+        return;
+      }
+      // The original line (the compass's "span") stays exactly as it was —
+      // no need to draw its radius again, it's already right there.
+      commit([
+        ...itemsRef.current,
+        {
+          kind: 'circle',
+          id: crypto.randomUUID(),
+          color: colorRef.current,
+          width: penSizeRef.current,
+          x1: sweep.cx - sweep.radius,
+          y1: sweep.cy - sweep.radius,
+          x2: sweep.cx + sweep.radius,
+          y2: sweep.cy + sweep.radius,
+        },
+      ]);
+      return;
+    }
+
     if (t === 'pen') {
       if (!currentPenRef.current) return;
       const stroke = currentPenRef.current;
@@ -2408,14 +2451,47 @@ export default function CanvasBoard({
       let { x: x1, y: y1 } = startRef.current;
       let x2 = pos.x,
         y2 = pos.y;
-      // A 'line' drag that swept far enough around its start point finishes
-      // as a circle instead — same as the compass tool from here on.
-      const lineBecameCircle = t === 'line' && lineSweepRef.current.isCircle;
+
+      if (t === 'circle' || t === 'compass') {
+        const anchor = circleAnchorRef.current;
+        circleAnchorRef.current = null;
+        // A plain click (no real sweep) on a geometric figure's vertex (3+
+        // points — triangles, squares, polygons) circumscribes it instantly.
+        // Lines only have 2 points, so they're excluded — from a line's
+        // endpoint you always have to sweep the radius yourself.
+        if (Math.hypot(x2 - x1, y2 - y1) < 3 && anchor && anchor.vertices.length >= 3) {
+          const built = circleThroughVertices(anchor.vertices);
+          if (built) {
+            commit([
+              ...itemsRef.current,
+              {
+                kind: 'circle',
+                id: crypto.randomUUID(),
+                color: colorRef.current,
+                width: penSizeRef.current,
+                x1: built.cx - built.r,
+                y1: built.cy - built.r,
+                x2: built.cx + built.r,
+                y2: built.cy + built.r,
+              },
+            ]);
+          } else {
+            redraw();
+          }
+          return;
+        }
+      }
+
+      // The compass tool keeps its radius as a permanent line — center to
+      // the exact point the drag ended on — alongside the circle. The plain
+      // circle tool draws only the circle, same as before.
+      let radiusLine: { x1: number; y1: number; x2: number; y2: number } | null = null;
       if (t === 'rect') {
         const c = constrainToSquare(x1, y1, x2, y2);
         x2 = c.x2;
         y2 = c.y2;
-      } else if (t === 'circle' || t === 'compass' || lineBecameCircle) {
+      } else if (t === 'circle' || t === 'compass') {
+        if (t === 'compass') radiusLine = { x1, y1, x2, y2 };
         const c = circleBoxFromCenter(x1, y1, x2, y2);
         x1 = c.x1;
         y1 = c.y1;
@@ -2429,9 +2505,9 @@ export default function CanvasBoard({
       commit([
         ...itemsRef.current,
         {
-          // The compass tool (and a line swept into a circle) draws exactly
-          // a circle — only the live preview looks different from a plain circle.
-          kind: t === 'compass' || lineBecameCircle ? 'circle' : t === 'dashed-line' ? 'line' : t,
+          // The compass tool draws exactly a circle — only the live preview
+          // (with its radius arm) looks different from the plain circle tool.
+          kind: t === 'dashed-line' ? 'line' : t === 'compass' ? 'circle' : t,
           id: crypto.randomUUID(),
           color: colorRef.current,
           width: penSizeRef.current,
@@ -2441,12 +2517,49 @@ export default function CanvasBoard({
           y2,
           ...(t === 'dashed-line' && { dashPattern: dashPatternRef.current }),
         },
+        ...(radiusLine
+          ? [
+              {
+                kind: 'line' as const,
+                id: crypto.randomUUID(),
+                color: colorRef.current,
+                width: penSizeRef.current,
+                ...radiusLine,
+              },
+            ]
+          : []),
       ]);
     } else if (t === 'geom' && activeGeomRef.current) {
       let { x: x1, y: y1 } = startRef.current;
       let x2 = pos.x;
       let y2 = pos.y;
+
       if (activeGeomRef.current === 'circle-geom') {
+        const anchor = circleAnchorRef.current;
+        circleAnchorRef.current = null;
+        if (Math.hypot(x2 - x1, y2 - y1) < 3 && anchor && anchor.vertices.length >= 3) {
+          const built = circleThroughVertices(anchor.vertices);
+          if (built) {
+            commit([
+              ...itemsRef.current,
+              {
+                kind: 'geom',
+                id: crypto.randomUUID(),
+                geomKind: 'circle-geom',
+                color: colorRef.current,
+                width: penSizeRef.current,
+                x1: built.cx - built.r,
+                y1: built.cy - built.r,
+                x2: built.cx + built.r,
+                y2: built.cy + built.r,
+                style: { ...geomStyleRef.current },
+              },
+            ]);
+          } else {
+            redraw();
+          }
+          return;
+        }
         const c = circleBoxFromCenter(x1, y1, x2, y2);
         x1 = c.x1;
         y1 = c.y1;
