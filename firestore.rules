@@ -10,6 +10,16 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // ── Presence (live cursors) ────────────────────────────────────────────
+    // One ephemeral document per connected user, written by themselves and
+    // deleted on tab close. No auth required — matches the "anyone with the
+    // link can draw" model. Had no rule at all before, so every read/write
+    // was silently denied (Firestore denies anything with no matching match
+    // block) and the presence listener threw on every session.
+    match /boards/{boardId}/presence/{userId} {
+      allow read, write: if true;
+    }
+
     // ── Board metadata ─────────────────────────────────────────────────────
     // Anyone can read (needed to fetch title when joining via link).
     // Anyone can create (anonymous boards are allowed).
