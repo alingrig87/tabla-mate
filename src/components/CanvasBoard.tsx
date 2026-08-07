@@ -178,6 +178,164 @@ function circleBoxFromCenter(cx: number, cy: number, px: number, py: number) {
   return { x1: cx - r, y1: cy - r, x2: cx + r, y2: cy + r };
 }
 
+// ─── Pen-drawn circle: snap onto a nearby shape's vertex ──────────────────────
+//
+// Returns the defining points (corners) of shapes that have well-defined ones,
+// so a freehand circle started on one of them can snap to the exact geometry
+// instead of the rough hand-drawn shape. Mirrors the exact per-kind vertex math
+// used to render each shape in src/shapes/index.ts's drawGeom — keep both in
+// sync if a shape's geometry changes there.
+function getShapeVertices(item: DrawItem): Point[] | null {
+  if (item.kind === 'line') {
+    return [
+      { x: item.x1, y: item.y1 },
+      { x: item.x2, y: item.y2 },
+    ];
+  }
+  if (item.kind === 'rect') {
+    const L = Math.min(item.x1, item.x2),
+      R = Math.max(item.x1, item.x2);
+    const T = Math.min(item.y1, item.y2),
+      B = Math.max(item.y1, item.y2);
+    return [
+      { x: L, y: T },
+      { x: R, y: T },
+      { x: R, y: B },
+      { x: L, y: B },
+    ];
+  }
+  if (item.kind !== 'geom') return null;
+
+  const { x1, y1, x2, y2 } = item;
+  const L = Math.min(x1, x2),
+    R = Math.max(x1, x2);
+  const T = Math.min(y1, y2),
+    B = Math.max(y1, y2);
+  const cx = (L + R) / 2,
+    cy = (T + B) / 2;
+  const hw = (R - L) / 2,
+    hh = (B - T) / 2;
+  const r = Math.min(hw, hh);
+
+  switch (item.geomKind) {
+    case 'segment':
+      return [
+        { x: L, y: cy },
+        { x: R, y: cy },
+      ];
+    case 'square-geom':
+    case 'rect-geom':
+      return [
+        { x: L, y: T },
+        { x: R, y: T },
+        { x: R, y: B },
+        { x: L, y: B },
+      ];
+    case 'tri-right':
+      return [
+        { x: L, y: B },
+        { x: R, y: B },
+        { x: L, y: T },
+      ];
+    case 'tri-equilateral': {
+      const hE = r * Math.sqrt(3);
+      return [
+        { x: cx, y: cy - (hE * 2) / 3 },
+        { x: cx + r, y: cy + hE / 3 },
+        { x: cx - r, y: cy + hE / 3 },
+      ];
+    }
+    case 'tri-isosceles':
+      return [
+        { x: cx, y: T },
+        { x: R, y: B },
+        { x: L, y: B },
+      ];
+    case 'tri-scalene': {
+      const apexX = L + hw * 0.35;
+      return [
+        { x: apexX, y: T },
+        { x: R, y: B },
+        { x: L, y: B },
+      ];
+    }
+    case 'tri-acute':
+      return [
+        { x: cx + hw * 0.08, y: T + hh * 0.06 },
+        { x: R - hw * 0.07, y: B },
+        { x: L + hw * 0.04, y: B - hh * 0.12 },
+      ];
+    case 'tri-obtuse':
+      return [
+        { x: L + hw * 0.12, y: cy + hh * 0.18 },
+        { x: R - hw * 0.05, y: B - hh * 0.05 },
+        { x: cx - hw * 0.1, y: T + hh * 0.12 },
+      ];
+    default:
+      return null;
+  }
+}
+
+// Circumcircle through three points — exact for triangles, and also correct
+// for rectangles/regular polygons since their corners are concyclic by
+// construction. Null if the points are collinear (no unique circle).
+function circumcircle(a: Point, b: Point, c: Point): { cx: number; cy: number; r: number } | null {
+  const d = 2 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+  if (Math.abs(d) < 1e-6) return null;
+  const aSq = a.x * a.x + a.y * a.y;
+  const bSq = b.x * b.x + b.y * b.y;
+  const cSq = c.x * c.x + c.y * c.y;
+  const ux = (aSq * (b.y - c.y) + bSq * (c.y - a.y) + cSq * (a.y - b.y)) / d;
+  const uy = (aSq * (c.x - b.x) + bSq * (a.x - c.x) + cSq * (b.x - a.x)) / d;
+  return { cx: ux, cy: uy, r: Math.hypot(a.x - ux, a.y - uy) };
+}
+
+// A freehand pen stroke that recognizeShape already read as "roughly a
+// circle" gets corrected here if it started right on an existing shape's
+// vertex: from a line's endpoint, the radius locks to that line's own length
+// (center pinned to the endpoint you started from); from a triangle/square's
+// corner, it snaps to the exact circle circumscribed through all of its
+// vertices. Returns null if the start point isn't close enough to any vertex,
+// leaving the rough hand-drawn circle as recognized.
+function findVertexSnappedCircle(
+  items: DrawItem[],
+  start: Point,
+  scale: number
+): { cx: number; cy: number; r: number } | null {
+  const hitRadius = 14 / scale;
+  let bestVertex: Point | null = null;
+  let bestVertices: Point[] | null = null;
+  let bestDist = hitRadius;
+  for (const item of items) {
+    const vertices = getShapeVertices(item);
+    if (!vertices) continue;
+    for (const v of vertices) {
+      const dist = Math.hypot(v.x - start.x, v.y - start.y);
+      if (dist <= bestDist) {
+        bestDist = dist;
+        bestVertex = v;
+        bestVertices = vertices;
+      }
+    }
+  }
+  if (!bestVertex || !bestVertices) return null;
+
+  if (bestVertices.length === 2) {
+    const [a, b] = bestVertices;
+    const other = a.x === bestVertex.x && a.y === bestVertex.y ? b : a;
+    return {
+      cx: bestVertex.x,
+      cy: bestVertex.y,
+      r: Math.hypot(other.x - bestVertex.x, other.y - bestVertex.y),
+    };
+  }
+  if (bestVertices.length >= 3) {
+    const [a, b, c] = bestVertices;
+    return circumcircle(a, b, c);
+  }
+  return null;
+}
+
 // ─── Shape recognition ────────────────────────────────────────────────────────
 
 type RecognizedShape =
@@ -2076,6 +2234,20 @@ export default function CanvasBoard({
       currentPenRef.current = null;
       const recognized = recognizeShape(stroke.points);
       if (recognized) {
+        let { x1, y1, x2, y2 } = recognized;
+        if (recognized.kind === 'circle') {
+          const snapped = findVertexSnappedCircle(
+            itemsRef.current,
+            stroke.points[0],
+            scaleRef.current
+          );
+          if (snapped) {
+            x1 = snapped.cx - snapped.r;
+            y1 = snapped.cy - snapped.r;
+            x2 = snapped.cx + snapped.r;
+            y2 = snapped.cy + snapped.r;
+          }
+        }
         commit([
           ...itemsRef.current,
           {
@@ -2083,10 +2255,10 @@ export default function CanvasBoard({
             id: crypto.randomUUID(),
             color: stroke.color,
             width: stroke.width,
-            x1: recognized.x1,
-            y1: recognized.y1,
-            x2: recognized.x2,
-            y2: recognized.y2,
+            x1,
+            y1,
+            x2,
+            y2,
           },
         ]);
       } else {
