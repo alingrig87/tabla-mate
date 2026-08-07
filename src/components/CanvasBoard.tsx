@@ -336,6 +336,31 @@ function findVertexSnappedCircle(
   return null;
 }
 
+// Loose "did this pen stroke trace a loop" check, independent of how round
+// it actually is: true if it ends up back close to where it started,
+// relative to its own overall size. A vertex-snapped circle only overrides
+// the hand-drawn shape when this passes — otherwise a stray straight-ish
+// scribble near a vertex would get forced into a circle it never attempted.
+function strokeClosesLoop(points: Point[]): boolean {
+  if (points.length < 8) return false;
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  for (const p of points) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const diag = Math.hypot(maxX - minX, maxY - minY);
+  if (diag < 20) return false;
+  const p0 = points[0];
+  const pN = points[points.length - 1];
+  const closeDist = Math.hypot(pN.x - p0.x, pN.y - p0.y);
+  return closeDist < diag * 0.35;
+}
+
 // ─── Shape recognition ────────────────────────────────────────────────────────
 
 type RecognizedShape =
@@ -2233,21 +2258,30 @@ export default function CanvasBoard({
       const stroke = currentPenRef.current;
       currentPenRef.current = null;
       const recognized = recognizeShape(stroke.points);
-      if (recognized) {
-        let { x1, y1, x2, y2 } = recognized;
-        if (recognized.kind === 'circle') {
-          const snapped = findVertexSnappedCircle(
-            itemsRef.current,
-            stroke.points[0],
-            scaleRef.current
-          );
-          if (snapped) {
-            x1 = snapped.cx - snapped.r;
-            y1 = snapped.cy - snapped.r;
-            x2 = snapped.cx + snapped.r;
-            y2 = snapped.cy + snapped.r;
-          }
-        }
+      // A loop that started on an existing vertex snaps to the exact
+      // geometry (line's radius / shape's circumcircle) even if it's too
+      // wobbly to pass recognizeShape's own strict roundness test — the
+      // vertex is a much stronger signal of intent than the hand-drawn fit.
+      // Skipped when the stroke is clearly a straight line instead.
+      const snapped =
+        recognized?.kind !== 'line' && strokeClosesLoop(stroke.points)
+          ? findVertexSnappedCircle(itemsRef.current, stroke.points[0], scaleRef.current)
+          : null;
+      if (snapped) {
+        commit([
+          ...itemsRef.current,
+          {
+            kind: 'circle',
+            id: crypto.randomUUID(),
+            color: stroke.color,
+            width: stroke.width,
+            x1: snapped.cx - snapped.r,
+            y1: snapped.cy - snapped.r,
+            x2: snapped.cx + snapped.r,
+            y2: snapped.cy + snapped.r,
+          },
+        ]);
+      } else if (recognized) {
         commit([
           ...itemsRef.current,
           {
@@ -2255,10 +2289,10 @@ export default function CanvasBoard({
             id: crypto.randomUUID(),
             color: stroke.color,
             width: stroke.width,
-            x1,
-            y1,
-            x2,
-            y2,
+            x1: recognized.x1,
+            y1: recognized.y1,
+            x2: recognized.x2,
+            y2: recognized.y2,
           },
         ]);
       } else {
