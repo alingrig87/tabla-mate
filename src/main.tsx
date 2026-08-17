@@ -1,5 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import { Analytics } from '@vercel/analytics/react';
 import App from './App';
 import { AuthProvider } from './context/AuthContext';
 import './styles/index.css';
@@ -11,5 +12,6 @@ root.render(
     <AuthProvider>
       <App />
     </AuthProvider>
+    <Analytics />
   </React.StrictMode>
 );
