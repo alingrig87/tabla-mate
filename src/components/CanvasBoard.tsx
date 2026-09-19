@@ -1693,22 +1693,8 @@ export default function CanvasBoard({
       pendingUploadIds.current.add(item.id);
       // Exclude id from the stored data (it's the doc id, not a field)
       const { id, ...data } = item as DrawItem & { id: string };
-      // TEMP DEBUG — remove once the collaborative-sync lag is diagnosed.
-      const _t0 = performance.now(); // eslint-disable-line @typescript-eslint/naming-convention
-      const _bytes = JSON.stringify(data).length; // eslint-disable-line @typescript-eslint/naming-convention
-      const _conn = (
-        navigator as unknown as { connection?: { effectiveType?: string; downlink?: number } }
-      ).connection; // eslint-disable-line @typescript-eslint/naming-convention
-      console.log(
-        `[sync-debug] WRITE start id=${id} kind=${item.kind} bytes=${_bytes} at=${Date.now()} conn=${_conn?.effectiveType ?? '?'}/${_conn?.downlink ?? '?'}Mbps`
-      );
       addItemToBoard(bid, id, data as Record<string, unknown>, authUser?.uid ?? 'anon')
-        .then(() => {
-          pendingUploadIds.current.delete(id);
-          console.log(
-            `[sync-debug] WRITE acked id=${id} after ${(performance.now() - _t0).toFixed(0)}ms`
-          );
-        })
+        .then(() => pendingUploadIds.current.delete(id))
         .catch(console.error);
     }
 
