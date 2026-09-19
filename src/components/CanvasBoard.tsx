@@ -297,11 +297,14 @@ function circumcircle(a: Point, b: Point, c: Point): { cx: number; cy: number; r
 // corner, it snaps to the exact circle circumscribed through all of its
 // vertices. Returns null if the start point isn't close enough to any vertex,
 // leaving the rough hand-drawn circle as recognized.
-function findVertexSnappedCircle(
+// Shared by the actual snap (on stroke end) and the hover hint (before the
+// stroke starts): finds the closest shape vertex within snapping range of a
+// point, plus the sibling vertices needed to derive the circle from it.
+function findSnapVertexCandidate(
   items: DrawItem[],
-  start: Point,
+  point: Point,
   scale: number
-): { cx: number; cy: number; r: number } | null {
+): { vertex: Point; vertices: Point[] } | null {
   const hitRadius = 14 / scale;
   let bestVertex: Point | null = null;
   let bestVertices: Point[] | null = null;
@@ -310,7 +313,7 @@ function findVertexSnappedCircle(
     const vertices = getShapeVertices(item);
     if (!vertices) continue;
     for (const v of vertices) {
-      const dist = Math.hypot(v.x - start.x, v.y - start.y);
+      const dist = Math.hypot(v.x - point.x, v.y - point.y);
       if (dist <= bestDist) {
         bestDist = dist;
         bestVertex = v;
@@ -319,6 +322,17 @@ function findVertexSnappedCircle(
     }
   }
   if (!bestVertex || !bestVertices) return null;
+  return { vertex: bestVertex, vertices: bestVertices };
+}
+
+function findVertexSnappedCircle(
+  items: DrawItem[],
+  start: Point,
+  scale: number
+): { cx: number; cy: number; r: number } | null {
+  const candidate = findSnapVertexCandidate(items, start, scale);
+  if (!candidate) return null;
+  const { vertex: bestVertex, vertices: bestVertices } = candidate;
 
   if (bestVertices.length === 2) {
     const [a, b] = bestVertices;
@@ -807,6 +821,24 @@ function drawHighlight(ctx: CanvasRenderingContext2D, item: DrawItem) {
   ctx.restore();
 }
 
+// Blue ring around a shape vertex, shown while hovering the pen tool nearby:
+// signals "start a circle gesture here and it'll snap to this line's radius
+// (or this shape's circumcircle)" before the user commits to the stroke.
+function drawSnapHint(ctx: CanvasRenderingContext2D, vertex: Point, scale: number) {
+  ctx.save();
+  const r = 9 / scale;
+  ctx.strokeStyle = '#3b82f6';
+  ctx.lineWidth = 2 / scale;
+  ctx.globalAlpha = 0.85;
+  ctx.beginPath();
+  ctx.arc(vertex.x, vertex.y, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = '#3b82f6';
+  ctx.globalAlpha = 0.18;
+  ctx.fill();
+  ctx.restore();
+}
+
 // ─── Selection helpers ────────────────────────────────────────────────────────
 
 // Axis-aligned bounding box for any DrawItem, expanded by `pad` world units.
@@ -1249,6 +1281,8 @@ export default function CanvasBoard({
   const hoveredIdxRef = useRef<number>(-1);
   // Snapshot taken at the START of an erase drag — single undo entry for the whole drag
   const preEraseSnapshotRef = useRef<DrawItem[] | null>(null);
+  // Vertex currently highlighted as a pen-circle snap target (hover, before drawing starts)
+  const penSnapVertexRef = useRef<Point | null>(null);
 
   // ── Selection tool state ──────────────────────────────────────────────────
   // selectedId: id of the currently selected item, or null if nothing is selected
@@ -1271,6 +1305,14 @@ export default function CanvasBoard({
     if (tool !== 'select') {
       setSelectedId(null);
       selectedIdRef.current = null;
+    }
+  }, [tool]);
+
+  // Clear the pen snap-vertex hint when switching away from the pen tool
+  useEffect(() => {
+    if (tool !== 'pen' && penSnapVertexRef.current) {
+      penSnapVertexRef.current = null;
+      redraw();
     }
   }, [tool]);
 
@@ -1958,6 +2000,18 @@ export default function CanvasBoard({
     if (idx >= 0) drawHighlight(getCtx(), itemsRef.current[idx]);
   }
 
+  // Update the pen-tool snap-vertex hint without committing (called in
+  // pointerMove while hovering, before any stroke has started)
+  function updatePenSnapHover(pos: Point) {
+    const candidate = findSnapVertexCandidate(itemsRef.current, pos, scaleRef.current);
+    const next = candidate?.vertex ?? null;
+    const prev = penSnapVertexRef.current;
+    if (prev === next || (prev && next && prev.x === next.x && prev.y === next.y)) return;
+    penSnapVertexRef.current = next;
+    redraw();
+    if (next) drawSnapHint(getCtx(), next, scaleRef.current);
+  }
+
   // Remove the topmost hit item; push one undo entry for the whole drag session
   function eraseAt(pos: Point) {
     const idx = findTopHit(pos.x, pos.y);
@@ -2042,6 +2096,11 @@ export default function CanvasBoard({
         width: penSizeRef.current,
         points: [pos],
       };
+      // Drop the hover hint now that the stroke itself has started
+      if (penSnapVertexRef.current) {
+        penSnapVertexRef.current = null;
+        redraw();
+      }
     } else {
       startRef.current = pos;
     }
@@ -2102,6 +2161,12 @@ export default function CanvasBoard({
       } else {
         updateEraserHover(pos); // hover: highlight item under cursor
       }
+      return;
+    }
+
+    // Pen tool, not yet drawing: show the snap-vertex hint while hovering
+    if (t === 'pen' && !isDrawingRef.current) {
+      updatePenSnapHover(pos);
       return;
     }
 
@@ -2194,6 +2259,11 @@ export default function CanvasBoard({
     if (toolRef.current === 'eraser') {
       setEraserPos(null);
       hoveredIdxRef.current = -1;
+      redraw();
+    }
+    // Clear pen snap-vertex hint when pointer exits the canvas
+    if (toolRef.current === 'pen' && penSnapVertexRef.current) {
+      penSnapVertexRef.current = null;
       redraw();
     }
   }
