@@ -54,6 +54,7 @@ export function subscribeToBoardItems(
 
   return onSnapshot(
     q,
+    { includeMetadataChanges: true },
     (snap) => {
       const items: RemoteItem[] = [];
       snap.forEach((d) => {
@@ -62,6 +63,10 @@ export function subscribeToBoardItems(
         const { createdAt: _ts, ...rest } = d.data();
         items.push({ id: d.id, ...rest } as RemoteItem);
       });
+      // TEMP DEBUG — remove once the collaborative-sync lag is diagnosed.
+      console.log(
+        `[sync-debug] SNAPSHOT at=${Date.now()} fromCache=${snap.metadata.fromCache} hasPendingWrites=${snap.metadata.hasPendingWrites} ids=${items.map((i) => i.id).join(',')}`
+      );
       onUpdate(items);
     },
     (err) => {
