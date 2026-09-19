@@ -1200,6 +1200,14 @@ const ERASER_RADII = [5, 10, 20, 40];
 // Discrete zoom levels — wheel/button zoom snaps to nearest step
 const ZOOM_STEPS = [0.1, 0.15, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4];
 
+// A bare numeric path (tablamate.ro/1, /2, /3, …) addresses a fixed,
+// permanent board directly — no ?board= query param needed, easy to
+// remember and share as-is. Falls back to the query param otherwise.
+function boardIdFromPath(pathname: string): string | null {
+  const m = pathname.match(/^\/(\d+)\/?$/);
+  return m ? m[1] : null;
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface CanvasBoardProps {
@@ -1219,9 +1227,11 @@ export default function CanvasBoard({
   const { user: authUser, loading: authLoading, loginWithGoogle } = useAuth();
 
   // ── Collaborative board state ────────────────────────────────────────────
-  // boardId is read from ?board=xxx URL param on load; set when creating a board.
+  // boardId is read from the URL on load — either a fixed numeric path
+  // (tablamate.ro/1) or a ?board=xxx query param — and set when creating one.
+  const fixedPathBoardId = boardIdFromPath(window.location.pathname);
   const [boardId, setBoardId] = useState<string | null>(() => {
-    return new URLSearchParams(window.location.search).get('board');
+    return fixedPathBoardId ?? new URLSearchParams(window.location.search).get('board');
   });
   // Stable ref so sync helpers can read boardId without stale closures
   const boardIdRef = useRef<string | null>(null);
@@ -2970,6 +2980,7 @@ export default function CanvasBoard({
         <SharePanel
           boardId={boardId}
           boardTitle={boardTitle}
+          shareUrl={fixedPathBoardId ? `${window.location.origin}/${fixedPathBoardId}` : undefined}
           onClose={() => setShowSharePanel(false)}
         />
       )}

@@ -21,6 +21,9 @@ import type { InviteRecord } from '../lib/invites';
 interface Props {
   boardId: string;
   boardTitle: string;
+  // Override for fixed-path boards (tablamate.ro/1) — bypasses the
+  // ?board= query-param URL that getShareUrl builds by default.
+  shareUrl?: string;
   onClose: () => void;
 }
 
@@ -38,8 +41,14 @@ function isValidEmail(s: string): boolean {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function SharePanel({ boardId, boardTitle, onClose }: Props): JSX.Element {
+export default function SharePanel({
+  boardId,
+  boardTitle,
+  shareUrl: shareUrlOverride,
+  onClose,
+}: Props): JSX.Element {
   const { user, loginWithGoogle } = useAuth();
+  const shareUrl = shareUrlOverride ?? getShareUrl(boardId);
 
   // URL copy
   const [copyLabel, setCopyLabel] = useState('Copiază');
@@ -101,7 +110,7 @@ export default function SharePanel({ boardId, boardTitle, onClose }: Props): JSX
       refreshInvites();
 
       // Open the user's email client with a pre-composed message
-      const boardUrl = getShareUrl(boardId);
+      const boardUrl = shareUrl;
       const inviterName = user.displayName ?? user.email ?? 'Cineva';
       const subject = encodeURIComponent(`Invitație la tabla colaborativă: ${boardTitle}`);
       const body = encodeURIComponent(
@@ -130,7 +139,7 @@ export default function SharePanel({ boardId, boardTitle, onClose }: Props): JSX
 
   // ── Copy URL ──────────────────────────────────────────────────────────────
   function handleCopy() {
-    navigator.clipboard.writeText(getShareUrl(boardId)).then(() => {
+    navigator.clipboard.writeText(shareUrl).then(() => {
       setCopyLabel('Copiat! ✓');
       setTimeout(() => setCopyLabel('Copiază'), 2000);
     });
@@ -154,7 +163,7 @@ export default function SharePanel({ boardId, boardTitle, onClose }: Props): JSX
         <div style={s.row}>
           <input
             readOnly
-            value={getShareUrl(boardId)}
+            value={shareUrl}
             onFocus={(e) => e.currentTarget.select()}
             style={s.urlInput}
           />
