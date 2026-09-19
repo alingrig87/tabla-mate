@@ -1191,11 +1191,11 @@ const PALETTE = [
   '#ffffff', // white
 ];
 
-const PEN_SIZES = [2, 4, 8, 16]; // stroke widths in CSS pixels
+const PEN_SIZES = [2, 4, 6, 8, 16]; // stroke widths in CSS pixels
 const TEXT_FONT_SIZE = 24;
 // Eraser hit-test tolerance (CSS px) — one entry per PEN_SIZES index.
 // Tying eraser size to pen size lets users switch between precision and broad erasure.
-const ERASER_RADII = [5, 10, 20, 40];
+const ERASER_RADII = [5, 10, 15, 20, 40];
 
 // Discrete zoom levels — wheel/button zoom snaps to nearest step
 const ZOOM_STEPS = [0.1, 0.15, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4];
