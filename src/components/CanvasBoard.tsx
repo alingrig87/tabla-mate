@@ -2111,8 +2111,14 @@ export default function CanvasBoard({
     const sp = getScreenPos(e);
     const t = toolRef.current;
 
-    // Publish own cursor position to Firestore (throttled)
-    if (boardIdRef.current) {
+    // Publish own cursor position to Firestore (throttled).
+    // Skipped while actively drawing/dragging: Firestore sends one client's
+    // writes through a single ordered stream, so a burst of presence writes
+    // during a multi-second stroke would queue ahead of the actual stroke
+    // write (sent on pointer-up) and delay it reaching other boards by
+    // several seconds. The live cursor isn't visible to others mid-stroke
+    // anyway (strokes aren't streamed live), so there's nothing lost.
+    if (boardIdRef.current && !isDrawingRef.current) {
       const now = Date.now();
       if (now - presenceThrottleRef.current > 80) {
         presenceThrottleRef.current = now;
