@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 
 // Config is loaded from .env.local (VITE_ prefix makes it available to the browser bundle).
 // Firebase Web API keys are safe to expose — security is enforced by Firestore Rules.
@@ -15,4 +15,8 @@ const firebaseConfig = {
 
 export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
-export const db = getFirestore(firebaseApp);
+// Some networks/proxies (school firewalls, some corporate networks) break the
+// WebChannel streaming connection Firestore uses by default without failing
+// outright — updates still arrive, but only after several seconds. Auto-detect
+// falls back to long-polling on those networks instead of stalling on it.
+export const db = initializeFirestore(firebaseApp, { experimentalAutoDetectLongPolling: true });
